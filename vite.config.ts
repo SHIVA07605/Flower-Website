@@ -12,6 +12,10 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  nitro: {
+    // When building in Vercel environment, produce native Vercel output
+    preset: process.env.VERCEL ? "vercel" : undefined,
+  },
   vite: {
     server: {
       port: 5173,
