@@ -121,7 +121,8 @@
   --gradient-cta: linear-gradient(180deg, oklch(0.44 0.08 160), oklch(0.34 0.07 162));
   --gradient-trail: linear-gradient(180deg, var(--gold), var(--primary));
   --shadow-cta: 0 14px 30px -12px oklch(0.34 0.07 160 / 0.65), inset 0 1px 0 oklch(1 0 0 / 0.18);
-  --shadow-card: 0 30px 60px -28px oklch(0.25 0.04 70 / 0.45), 0 10px 20px -12px oklch(0.25 0.04 70 / 0.25);
+  --shadow-card:
+    0 30px 60px -28px oklch(0.25 0.04 70 / 0.45), 0 10px 20px -12px oklch(0.25 0.04 70 / 0.25);
   --shadow-soft: 0 18px 40px -24px oklch(0.25 0.04 70 / 0.35);
 }
 
@@ -233,8 +234,18 @@
 
 @utility bouquet-halo {
   background:
-    radial-gradient(circle at 50% 50%, oklch(0.99 0.02 90 / 0.95) 0%, oklch(0.97 0.03 90 / 0.6) 45%, transparent 70%),
-    conic-gradient(from 0deg, oklch(0.93 0.06 90 / 0.4), oklch(0.92 0.05 160 / 0.4), oklch(0.93 0.06 90 / 0.4));
+    radial-gradient(
+      circle at 50% 50%,
+      oklch(0.99 0.02 90 / 0.95) 0%,
+      oklch(0.97 0.03 90 / 0.6) 45%,
+      transparent 70%
+    ),
+    conic-gradient(
+      from 0deg,
+      oklch(0.93 0.06 90 / 0.4),
+      oklch(0.92 0.05 160 / 0.4),
+      oklch(0.93 0.06 90 / 0.4)
+    );
 }
 
 @utility paper-panel {
@@ -247,8 +258,7 @@
 @utility bg-fern-panel {
   background:
     radial-gradient(120% 120% at 0% 0%, oklch(0.42 0.08 158) 0%, transparent 55%),
-    radial-gradient(100% 100% at 100% 100%, oklch(0.36 0.06 140) 0%, transparent 60%),
-    var(--fern);
+    radial-gradient(100% 100% at 100% 100%, oklch(0.36 0.06 140) 0%, transparent 60%), var(--fern);
 }
 
 @utility reveal-init {
@@ -287,4 +297,21 @@
 
 @utility animate-marquee {
   animation: marquee 38s linear infinite;
+}
+
+/* Printing an invoice from the admin dashboard prints only the invoice. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  [data-print-area],
+  [data-print-area] * {
+    visibility: visible;
+  }
+  [data-print-area] {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    padding: 1.5rem;
+  }
 }

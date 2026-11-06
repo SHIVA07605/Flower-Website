@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { createLovableAiGatewayRunIdFetch } from "./ai/run-id.server";
 import { pickCandidates, type FinderInput, type FinderResult } from "./bouquet-finder.shared";
+import { loadCatalog } from "./server/store.server";
 
 const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1";
 const MODEL = "openai/gpt-6-astra";
@@ -35,11 +36,15 @@ export async function recommendBouquet(input: FinderInput): Promise<FinderResult
   const apiKey = process.env["LOVABLE_API_KEY"];
   if (!apiKey) throw new FinderError("The bouquet finder isn't configured yet.", 500);
 
-  const { candidates, overBudget } = pickCandidates(input.budget);
+  // The same live catalog the storefront shows (admin prices, hidden and added bouquets).
+  const { candidates, overBudget } = pickCandidates(await loadCatalog(), input.budget);
+  if (candidates.length === 0) {
+    throw new FinderError("The studio has no bouquets available right now.", 503);
+  }
   const catalog = candidates
     .map(
       (b) =>
-        `- id: ${b.id} | ${b.name} by ${b.maker} | $${b.price} | flowers: ${b.flowers.join(", ")} | colours: ${b.palette} | good for: ${b.occasions.join(", ")} | ${b.blurb}`,
+        `- id: ${b.id} | ${b.name} by ${b.maker} | ₹${b.price} | flowers: ${b.flowers.join(", ")} | colours: ${b.palette} | good for: ${b.occasions.join(", ")} | ${b.blurb}`,
     )
     .join("\n");
 
@@ -58,7 +63,7 @@ export async function recommendBouquet(input: FinderInput): Promise<FinderResult
     messages: [
       {
         role: "user",
-        content: `Occasion: ${input.occasion}\nPreferred flowers: ${input.flowers || "no preference"}\nBudget: up to $${input.budget}\n\nCatalog:\n${catalog}`,
+        content: `Occasion: ${input.occasion}\nPreferred flowers: ${input.flowers || "no preference"}\nBudget: up to ₹${input.budget} (Indian Rupees)\n\nCatalog:\n${catalog}`,
       },
     ],
     output: Output.object({ schema: resultSchema }),

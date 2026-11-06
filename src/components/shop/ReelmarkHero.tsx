@@ -1,15 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { Link } from "@tanstack/react-router";
 import gsap from "gsap";
 
 import floralTop from "@/assets/floral-top-long.webp";
 import floralBottom from "@/assets/floral-bottom.webp";
 import { createFallingLeaves } from "@/lib/falling-leaves";
-import { formatPrice } from "./products";
+import { contentImage } from "@/lib/site-content";
 import { useCart } from "./cart";
-import { useAuth } from "@/hooks/use-auth";
-import { useSiteContent } from "@/hooks/use-site-content";
-import { useProducts } from "@/hooks/use-products";
-import { AuthModal } from "./AuthModal";
+import { formatPrice } from "./products";
+import { useProductView } from "./product-view";
+import { useStorefront } from "./storefront";
+import { UserMenu } from "./UserMenu";
+
+/** The arc looks best with up to nine reels. */
+const MAX_REELS = 9;
 
 /* ---------------- Arc geometry ---------------- */
 
@@ -73,20 +77,18 @@ function BagIcon() {
 /* ---------------- Hero ---------------- */
 
 export function ReelmarkHero() {
-  const { count } = useCart();
-  const { user, profile, isAdmin, signOut } = useAuth();
-  const { getText, getImage } = useSiteContent();
-  const topFloralSrc = getImage("image_hero_floral_top", floralTop);
-  const bottomFloralSrc = getImage("image_hero_floral_bottom", floralBottom);
-  const { products: reelProducts } = useProducts();
+  const { count, openCart } = useCart();
+  const { content, catalog } = useStorefront();
+  const { show: showProduct } = useProductView();
+  const topFloralSrc = contentImage(content, "image_hero_floral_top", floralTop);
+  const bottomFloralSrc = contentImage(content, "image_hero_floral_bottom", floralBottom);
+  const reelProducts = useMemo(() => catalog.slice(0, MAX_REELS), [catalog]);
 
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
-
-  const openAuth = (mode: "login" | "signup") => {
-    setAuthMode(mode);
-    setAuthModalOpen(true);
-  };
+  // Read inside the GSAP effect without re-running the intro animation.
+  const reelIdsRef = useRef<string[]>([]);
+  reelIdsRef.current = reelProducts.map((p) => p.id);
+  const showProductRef = useRef(showProduct);
+  showProductRef.current = showProduct;
 
   const rootRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -316,7 +318,13 @@ export function ReelmarkHero() {
 
     const handlers = cards.map((card, i) => {
       const enter = () => hoverIn(i);
-      const click = () => readyRef.current && focus(i);
+      // First tap brings a reel to the centre; tapping the centred reel opens it to shop.
+      const click = () => {
+        if (!readyRef.current && !reduced) return;
+        const id = reelIdsRef.current[i];
+        if (activeRef.current === i && id) showProductRef.current(id);
+        else focus(i);
+      };
       card.addEventListener("pointerenter", enter);
       card.addEventListener("focus", enter);
       card.addEventListener("pointerleave", hoverOut);
@@ -448,10 +456,10 @@ export function ReelmarkHero() {
       {/* Navbar */}
       <header data-nav className="reveal-init relative z-40 px-4 pt-4 sm:px-8">
         <nav className="nav-glass mx-auto flex max-w-5xl items-center justify-between gap-4 rounded-full py-2 pl-4 pr-2 sm:pl-5">
-          <a href="/" className="flex items-center gap-2 text-foreground">
+          <Link to="/" className="flex items-center gap-2 text-foreground">
             <LeafMark className="h-6 w-6 text-primary" />
             <span className="font-display text-xl font-extrabold tracking-[-0.03em]">Reelmark</span>
-          </a>
+          </Link>
 
           <ul className="hidden items-center gap-8 text-[0.95rem] font-medium text-ink-soft md:flex">
             {[
@@ -471,70 +479,21 @@ export function ReelmarkHero() {
             ))}
           </ul>
 
-          <div className="flex items-center gap-1.5">
-            <a
-              href="#best-sellers"
-              aria-label={`Cart, ${count} items`}
-              className="hidden items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-nav-ghost sm:flex"
+          <div className="flex items-center gap-1 sm:gap-1.5">
+            <button
+              type="button"
+              onClick={openCart}
+              aria-label={`Open bag, ${count} ${count === 1 ? "item" : "items"}`}
+              className="flex cursor-pointer items-center gap-2 rounded-full px-2.5 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-nav-ghost sm:px-3"
             >
               <BagIcon />
-              Cart
+              <span className="hidden sm:inline">Bag</span>
               <span className="grid h-5 min-w-5 place-items-center rounded-full bg-primary px-1 text-[0.7rem] font-bold text-primary-foreground">
                 {count}
               </span>
-            </a>
+            </button>
             <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-border sm:block" />
-            {!user ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => openAuth("login")}
-                  className="nav-ghost rounded-full px-4 py-2 text-sm font-semibold text-foreground transition-transform hover:-translate-y-0.5 cursor-pointer"
-                >
-                  Log in
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openAuth("signup")}
-                  className="bg-cta rounded-full px-5 py-2 text-sm font-semibold text-primary-foreground shadow-cta transition-transform hover:-translate-y-0.5 cursor-pointer"
-                >
-                  Sign up
-                </button>
-              </>
-            ) : (
-              <div className="flex items-center gap-2">
-                {profile?.avatar_url ? (
-                  <img
-                    src={profile.avatar_url}
-                    alt={profile.username || "User avatar"}
-                    className="h-7 w-7 rounded-full object-cover ring-1 ring-border shadow-xs"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
-                    {(profile?.username || user.email || "U")[0].toUpperCase()}
-                  </div>
-                )}
-                {isAdmin && (
-                  <a
-                    href="/admin"
-                    className="nav-ghost rounded-full px-3 py-1.5 text-xs font-bold text-primary border border-primary/30 transition-transform hover:-translate-y-0.5"
-                  >
-                    Admin
-                  </a>
-                )}
-                <span className="hidden text-xs font-semibold text-foreground/80 sm:inline max-w-[120px] truncate">
-                  {profile?.username || user.email?.split("@")[0]}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => signOut()}
-                  className="nav-ghost rounded-full px-3 py-1.5 text-xs font-medium text-ink-soft hover:text-foreground transition-colors cursor-pointer"
-                >
-                  Log out
-                </button>
-              </div>
-            )}
+            <UserMenu />
           </div>
         </nav>
       </header>
@@ -545,7 +504,7 @@ export function ReelmarkHero() {
           data-kicker
           className="reveal-init rounded-full bg-kicker px-4 py-1.5 text-sm font-semibold tracking-tight text-kicker-foreground ring-1 ring-kicker-foreground/15 backdrop-blur-sm"
         >
-          {getText("hero_kicker", "Trusted by 120,000+ flower lovers")}
+          {content.hero_kicker}
         </p>
 
         <h1
@@ -554,12 +513,12 @@ export function ReelmarkHero() {
         >
           <span className="block overflow-hidden pb-[0.08em]">
             <span data-line className="line-init block">
-              {getText("hero_title_1", "Shop the Blooms")}
+              {content.hero_title_1}
             </span>
           </span>
           <span className="block overflow-hidden pb-[0.08em]">
             <span data-line className="line-init block">
-              {getText("hero_title_2", "You Saw in Reels")}
+              {content.hero_title_2}
             </span>
           </span>
         </h1>
@@ -568,10 +527,7 @@ export function ReelmarkHero() {
           data-sub
           className="reveal-init mt-5 max-w-xl text-[clamp(1rem,1.4vw,1.15rem)] leading-relaxed text-muted-foreground"
         >
-          {getText(
-            "hero_subtitle",
-            "Hand-tied bouquets from indie florists, shown in short, snappy reels. Tap any reel to see it up close, then send it across town today."
-          )}
+          {content.hero_subtitle}
         </p>
       </div>
 
@@ -634,10 +590,8 @@ export function ReelmarkHero() {
           aria-hidden="true"
           className="reveal-init pointer-events-none absolute right-[8%] top-[-5.5rem] z-40 hidden flex-col items-center lg:flex"
         >
-          <span className="rotate-[12deg] font-hand text-2xl leading-6 text-primary">
-            Tap a reel
-            <br />
-            to shop it
+          <span className="rotate-[12deg] whitespace-pre-line text-center font-hand text-2xl leading-6 text-primary">
+            {content.hero_note_tap}
           </span>
           <svg
             viewBox="0 0 60 90"
@@ -661,7 +615,7 @@ export function ReelmarkHero() {
               href="#best-sellers"
               className="bg-cta group flex items-center gap-2 rounded-full px-9 py-4 text-base font-bold tracking-tight text-primary-foreground shadow-cta transition-transform duration-300 hover:-translate-y-0.5 hover:scale-[1.02]"
             >
-              Shop Now
+              {content.hero_cta}
               <svg
                 viewBox="0 0 24 24"
                 className="h-4 w-4 transition-transform group-hover:translate-x-1"
@@ -683,7 +637,7 @@ export function ReelmarkHero() {
             className="reveal-init pointer-events-none absolute right-full top-1/2 mr-3 hidden items-end sm:flex"
           >
             <span className="mb-[-1.5rem] rotate-[18deg] whitespace-nowrap font-hand text-2xl text-primary">
-              Same-day
+              {content.hero_note_sameday}
             </span>
             <svg
               viewBox="0 0 70 50"
@@ -699,12 +653,6 @@ export function ReelmarkHero() {
           </div>
         </div>
       </div>
-
-      <AuthModal
-        isOpen={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
-        initialMode={authMode}
-      />
     </section>
   );
 }

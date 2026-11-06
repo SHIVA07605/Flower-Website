@@ -6,7 +6,15 @@ import ranunculus from "@/assets/products/ranunculus-posy.jpg";
 import whiteLily from "@/assets/products/white-lily.jpg";
 import sunflower from "@/assets/products/sunflower-wrap.jpg";
 
-export type Occasion = "birthday" | "anniversary" | "sympathy" | "just-because";
+export const OCCASIONS = ["birthday", "anniversary", "sympathy", "just-because"] as const;
+export type Occasion = (typeof OCCASIONS)[number];
+
+export const OCCASION_LABELS: Record<Occasion, string> = {
+  birthday: "Birthday",
+  anniversary: "Anniversary",
+  sympathy: "Sympathy",
+  "just-because": "Just because",
+};
 
 export interface Bouquet {
   id: string;
@@ -18,9 +26,18 @@ export interface Bouquet {
   palette: string;
   occasions: Occasion[];
   blurb: string;
+  /** Shown in the Best sellers section unless the admin changes it. */
+  bestSeller?: boolean;
+  /** Seed rating shown on best-seller cards: [score, review count]. */
+  rating?: [number, number];
 }
 
-/** Shared catalog: shown on the page and used by the AI bouquet finder. Priced in Rupees (₹). */
+/**
+ * The base bouquet catalog, priced in Rupees (₹). Admin edits (prices, photos, hidden
+ * bouquets, new bouquets) live in the Supabase `products` table and are layered on top by
+ * `mergeCatalog` in `src/lib/catalog.ts` — every section and the AI finder read that merged
+ * catalog rather than importing this list directly.
+ */
 export const bouquets: Bouquet[] = [
   {
     id: "wildflower-jar",
@@ -43,6 +60,8 @@ export const bouquets: Bouquet[] = [
     palette: "soft blush and pale pink",
     occasions: ["anniversary", "birthday"],
     blurb: "Big, romantic peonies and garden roses in a cream vase.",
+    bestSeller: true,
+    rating: [4.9, 604],
   },
   {
     id: "ranunculus-posy",
@@ -54,6 +73,8 @@ export const bouquets: Bouquet[] = [
     palette: "coral, peach and candy pink",
     occasions: ["birthday", "just-because"],
     blurb: "A bright hand-tied posy of ranunculus and sweet peas.",
+    bestSeller: true,
+    rating: [4.8, 451],
   },
   {
     id: "golden-hour-roses",
@@ -65,6 +86,8 @@ export const bouquets: Bouquet[] = [
     palette: "golden yellow and green",
     occasions: ["birthday", "anniversary", "just-because"],
     blurb: "Our signature yellow garden roses and mimosa in kraft wrap.",
+    bestSeller: true,
+    rating: [4.9, 812],
   },
   {
     id: "white-lily",
@@ -87,6 +110,8 @@ export const bouquets: Bouquet[] = [
     palette: "sunny yellow and orange",
     occasions: ["birthday", "just-because"],
     blurb: "Sunflowers and gerberas wrapped like a ray of light.",
+    bestSeller: true,
+    rating: [4.8, 389],
   },
   {
     id: "dried-pampas",
@@ -101,7 +126,8 @@ export const bouquets: Bouquet[] = [
   },
 ];
 
-/** Formats price in Indian Rupees (₹) */
-export const formatPrice = (n: number) => `₹${Number(n).toLocaleString("en-IN")}`;
+/** Formats an amount in Indian Rupees (₹), e.g. ₹1,299 or ₹2,358.82. */
+export const formatPrice = (n: number) =>
+  `₹${Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
-export const getBouquet = (id: string) => bouquets.find((b) => b.id === id);
+export const getBaseBouquet = (id: string) => bouquets.find((b) => b.id === id);

@@ -1,24 +1,27 @@
 import { useState, type FormEvent } from "react";
-import { Star, MessageSquarePlus, Loader2 } from "lucide-react";
+import { Loader2, MessageSquarePlus, Star } from "lucide-react";
+import { toast } from "sonner";
 
 import review1 from "@/assets/reviews/review-1.jpg";
 import review2 from "@/assets/reviews/review-2.jpg";
 import review3 from "@/assets/reviews/review-3.jpg";
-import { SectionHeading } from "./SectionHeading";
-import { bouquets } from "./products";
-import { useComments } from "@/hooks/use-comments";
-import { useAuth } from "@/hooks/use-auth";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from "@/components/ui/dialog";
+import { useAuth } from "@/hooks/use-auth";
+import { submitReview } from "@/lib/store.functions";
+import { formatPrice, getBaseBouquet } from "./products";
+import { SectionHeading } from "./SectionHeading";
+import { useStorefront } from "./storefront";
 
-const img = (id: string) => bouquets.find((b) => b.id === id)?.image ?? review1;
+const photoOf = (id: string) => getBaseBouquet(id)?.image ?? review1;
 
-const staticReviews = [
+/** Launch testimonials; approved shopper reviews are shown in front of these. */
+const testimonials = [
   {
     photo: review1,
     name: "Hannah K.",
@@ -41,21 +44,21 @@ const staticReviews = [
     rating: 5,
   },
   {
-    photo: img("white-lily"),
+    photo: photoOf("white-lily"),
     name: "Grace O.",
     bouquet: "White Lily Grace",
     quote: "Gentle, dignified and exactly right. The card was written so beautifully.",
     rating: 5,
   },
   {
-    photo: img("wildflower-jar"),
+    photo: photoOf("wildflower-jar"),
     name: "Leo M.",
     bouquet: "Meadow Jar",
     quote: "Looks like it was picked from a field that morning. My desk has never looked better.",
     rating: 5,
   },
   {
-    photo: img("sunflower-wrap"),
+    photo: photoOf("sunflower-wrap"),
     name: "Aisha R.",
     bouquet: "Sunshine Wrap",
     quote: "Sent it for a birthday and got a video call within minutes. Pure joy.",
@@ -64,64 +67,78 @@ const staticReviews = [
 ];
 
 export function Reviews() {
-  const { comments, addComment } = useComments();
-  const { user } = useAuth();
+  const { content, reviews, catalog, findProduct } = useStorefront();
+  const { user, openAuth } = useAuth();
   const [modalOpen, setModalOpen] = useState(false);
-  const [selectedBouquet, setSelectedBouquet] = useState(bouquets[0].id);
-  const [commentText, setCommentText] = useState("");
+  const [productId, setProductId] = useState("");
+  const [body, setBody] = useState("");
   const [rating, setRating] = useState(5);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Map dynamic comments to review card structure
-  const dynamicReviews = comments.map((c, i) => {
-    const bouquetObj = bouquets.find((b) => b.id === c.product_id) || bouquets[i % bouquets.length];
+  const shopperReviews = reviews.map((r) => {
+    const product = findProduct(r.productId);
     return {
-      photo: bouquetObj.image,
-      name: c.author_name || "Verified Customer",
-      bouquet: bouquetObj.name,
-      quote: c.comment_text,
-      rating: c.rating || 5,
+      photo: product?.image ?? photoOf(r.productId),
+      name: r.authorName,
+      bouquet: product?.name ?? "Reelmark bouquet",
+      quote: r.body,
+      rating: r.rating,
     };
   });
+  const all = [...shopperReviews, ...testimonials];
+  const loop = [...all, ...all];
 
-  // Combine dynamic + static so the marquee is always full and rich
-  const combinedReviews = [...dynamicReviews, ...staticReviews];
-  const loop = [...combinedReviews, ...combinedReviews];
+  const startReview = () => {
+    if (!user) {
+      toast.info("Sign in to share your review.");
+      openAuth("login");
+      return;
+    }
+    setProductId((id) => id || catalog[0]?.id || "");
+    setError(null);
+    setModalOpen(true);
+  };
 
-  const handleSubmitReview = async (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!commentText.trim()) return;
-
-    setIsSubmitting(true);
+    setSubmitting(true);
+    setError(null);
     try {
-      const { error } = await addComment(commentText, rating, selectedBouquet);
-      if (!error) {
-        setCommentText("");
-        setModalOpen(false);
+      const result = await submitReview({ data: { productId, rating, body } });
+      if (!result.ok) {
+        setError(result.error);
+        return;
       }
+      toast.success("Thank you! Your review will appear once our team approves it.");
+      setBody("");
+      setRating(5);
+      setModalOpen(false);
+    } catch {
+      setError("We couldn't send your review. Please try again.");
     } finally {
-      setIsSubmitting(false);
+      setSubmitting(false);
     }
   };
 
   return (
     <section data-trail-section aria-labelledby="reviews-title" className="relative py-24">
       <div className="px-4 sm:px-8">
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+        <div className="mx-auto flex max-w-6xl flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
           <SectionHeading
             id="reviews-title"
-            kicker="4.9 from 18,000+ reviews"
-            title="Sent with love, received with joy"
+            kicker={content.reviews_kicker}
+            title={content.reviews_title}
+            align="left"
           />
-          {user && (
-            <button
-              onClick={() => setModalOpen(true)}
-              className="inline-flex items-center gap-2 self-start rounded-full border border-border bg-white px-4 py-2 text-xs font-semibold text-foreground shadow-sm transition-transform hover:-translate-y-0.5 cursor-pointer"
-            >
-              <MessageSquarePlus className="h-4 w-4 text-primary" />
-              Write a Review
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={startReview}
+            className="inline-flex cursor-pointer items-center gap-2 self-start rounded-full border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition-transform hover:-translate-y-0.5 sm:self-auto"
+          >
+            <MessageSquarePlus className="h-4 w-4 text-primary" aria-hidden="true" />
+            Write a review
+          </button>
         </div>
       </div>
 
@@ -130,7 +147,7 @@ export function Reviews() {
           {loop.map((r, i) => (
             <li
               key={i}
-              aria-hidden={i >= combinedReviews.length}
+              aria-hidden={i >= all.length}
               className="paper-panel flex w-[300px] shrink-0 flex-col overflow-hidden rounded-3xl sm:w-[340px]"
             >
               <img
@@ -158,88 +175,92 @@ export function Reviews() {
         </ul>
       </div>
 
-      {/* Review Submission Dialog */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent className="max-w-md rounded-3xl bg-[#faf8f5] p-6 sm:p-8">
           <DialogHeader>
             <DialogTitle className="font-display text-2xl font-bold text-foreground">
-              Share Your Experience
+              Share your experience
             </DialogTitle>
             <DialogDescription className="text-sm text-ink-soft">
-              Your feedback helps indie florists thrive. Reviews are verified before publishing.
+              Your words help indie florists thrive. Reviews are checked by our team before they're
+              published.
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleSubmitReview} className="mt-4 space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-foreground mb-1">
-                Select Bouquet
-              </label>
+          <form onSubmit={handleSubmit} className="mt-2 space-y-4">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-foreground">Bouquet</span>
               <select
-                value={selectedBouquet}
-                onChange={(e) => setSelectedBouquet(e.target.value)}
+                value={productId}
+                onChange={(e) => setProductId(e.target.value)}
                 className="w-full rounded-2xl border border-border bg-white p-2.5 text-sm text-foreground focus:border-primary focus:outline-none"
               >
-                {bouquets.map((b) => (
+                {catalog.map((b) => (
                   <option key={b.id} value={b.id}>
-                    {b.name} (${b.price})
+                    {b.name} ({formatPrice(b.price)})
                   </option>
                 ))}
               </select>
-            </div>
+            </label>
 
             <div>
-              <label className="block text-xs font-semibold text-foreground mb-1">Rating</label>
-              <div className="flex gap-2">
+              <span className="mb-1 block text-xs font-semibold text-foreground">Rating</span>
+              <div className="flex gap-2" role="radiogroup" aria-label="Rating">
                 {[1, 2, 3, 4, 5].map((star) => (
                   <button
                     key={star}
                     type="button"
+                    role="radio"
+                    aria-checked={star === rating}
+                    aria-label={`${star} star${star > 1 ? "s" : ""}`}
                     onClick={() => setRating(star)}
-                    className="p-1 cursor-pointer transition-transform hover:scale-110"
+                    className="cursor-pointer p-1 transition-transform hover:scale-110"
                   >
                     <Star
-                      className={`h-6 w-6 ${
-                        star <= rating ? "fill-gold text-gold" : "text-border"
-                      }`}
+                      className={`h-6 w-6 ${star <= rating ? "fill-gold text-gold" : "text-border"}`}
                     />
                   </button>
                 ))}
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-foreground mb-1">
-                Your Words
-              </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-foreground">Your words</span>
               <textarea
                 required
-                rows={3}
+                rows={4}
+                maxLength={1000}
                 placeholder="How did the flowers arrive? How did they brighten the room?"
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
                 className="w-full rounded-2xl border border-border bg-white p-3 text-sm text-foreground focus:border-primary focus:outline-none"
               />
-            </div>
+            </label>
 
-            <div className="flex justify-end gap-2 pt-2">
+            {error && (
+              <p
+                role="alert"
+                className="rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
+                {error}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="rounded-full border border-border px-4 py-2 text-sm font-semibold hover:bg-muted cursor-pointer"
+                className="cursor-pointer rounded-full border border-border px-4 py-2 text-sm font-semibold hover:bg-muted"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="bg-cta shadow-cta rounded-full px-6 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50 cursor-pointer"
+                disabled={submitting || productId === ""}
+                className="bg-cta shadow-cta flex cursor-pointer items-center gap-2 rounded-full px-6 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
               >
-                {isSubmitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Submit Review"
-                )}
+                {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                Submit review
               </button>
             </div>
           </form>

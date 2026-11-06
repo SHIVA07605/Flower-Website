@@ -1,4 +1,4 @@
-import { bouquets, type Bouquet } from "@/components/shop/products";
+import type { Bouquet } from "@/components/shop/products";
 
 export const BUDGET_MIN = 799;
 export const BUDGET_MAX = 3999;
@@ -19,12 +19,15 @@ export interface FinderResult {
 }
 
 /**
- * Bouquets the AI may choose from: everything at or under the shopper's budget.
- * If nothing fits, offer only the cheapest bouquet and flag it as over budget.
+ * Bouquets the AI may choose from: everything in the live catalog at or under the
+ * shopper's budget. If nothing fits, offer only the cheapest bouquet and flag it.
  */
-export function pickCandidates(budget: number): { candidates: Bouquet[]; overBudget: boolean } {
-  const within = bouquets.filter((b) => b.price <= budget);
+export function pickCandidates<T extends Bouquet>(
+  catalog: readonly T[],
+  budget: number,
+): { candidates: T[]; overBudget: boolean } {
+  const within = catalog.filter((b) => b.price <= budget);
   if (within.length > 0) return { candidates: within, overBudget: false };
-  const cheapest = [...bouquets].sort((a, b) => a.price - b.price)[0]!;
-  return { candidates: [cheapest], overBudget: true };
+  const cheapest = [...catalog].sort((a, b) => a.price - b.price)[0];
+  return { candidates: cheapest ? [cheapest] : [], overBudget: cheapest !== undefined };
 }

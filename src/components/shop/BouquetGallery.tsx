@@ -5,13 +5,17 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import bouquet from "@/assets/bouquet-center.webp";
 import kitchenVase from "@/assets/reviews/review-2.jpg";
 import { createFallingLeaves } from "@/lib/falling-leaves";
-import { bouquets, formatPrice } from "./products";
-import { useSiteContent } from "@/hooks/use-site-content";
+import { contentImage } from "@/lib/site-content";
+import { formatPrice, getBaseBouquet } from "./products";
+import { useProductView } from "./product-view";
+import { useStorefront } from "./storefront";
 
 interface Tile {
-  image: string;
-  label: string;
-  price?: number;
+  /** A catalog bouquet (name, photo and price follow the live catalog)… */
+  productId?: string;
+  /** …or a fixed photo with a caption. */
+  image?: string;
+  label?: string;
   side: "left" | "right";
   x: string;
   top: string;
@@ -20,12 +24,10 @@ interface Tile {
   depth: number;
 }
 
-const byId = (id: string) => bouquets.find((b) => b.id === id)!;
-
 /** Product photos arranged in the space around the bouquet (desktop). */
 const tiles: Tile[] = [
   {
-    ...pick("blush-peony"),
+    productId: "blush-peony",
     side: "left",
     x: "5.5%",
     top: "4%",
@@ -34,7 +36,7 @@ const tiles: Tile[] = [
     depth: 1.2,
   },
   {
-    ...pick("wildflower-jar"),
+    productId: "wildflower-jar",
     side: "left",
     x: "19%",
     top: "-4%",
@@ -43,7 +45,7 @@ const tiles: Tile[] = [
     depth: 0.6,
   },
   {
-    ...pick("dried-pampas"),
+    productId: "dried-pampas",
     side: "left",
     x: "4.5%",
     top: "54%",
@@ -52,7 +54,7 @@ const tiles: Tile[] = [
     depth: 0.9,
   },
   {
-    ...pick("ranunculus-posy"),
+    productId: "ranunculus-posy",
     side: "left",
     x: "17.5%",
     top: "40%",
@@ -61,7 +63,7 @@ const tiles: Tile[] = [
     depth: 1.5,
   },
   {
-    ...pick("sunflower-wrap"),
+    productId: "sunflower-wrap",
     side: "right",
     x: "5.5%",
     top: "2%",
@@ -80,7 +82,7 @@ const tiles: Tile[] = [
     depth: 0.7,
   },
   {
-    ...pick("white-lily"),
+    productId: "white-lily",
     side: "right",
     x: "4.5%",
     top: "56%",
@@ -89,7 +91,7 @@ const tiles: Tile[] = [
     depth: 1,
   },
   {
-    ...pick("golden-hour-roses"),
+    productId: "golden-hour-roses",
     side: "right",
     x: "17.5%",
     top: "40%",
@@ -99,18 +101,33 @@ const tiles: Tile[] = [
   },
 ];
 
-function pick(id: string) {
-  const b = byId(id);
-  return { image: b.image, label: b.name, price: b.price };
-}
-
 /**
  * About section: the signature bouquet blooms in the centre, framed by real
  * product photos that drift at different depths as you scroll.
  */
+interface ResolvedTile extends Tile {
+  image: string;
+  label: string;
+  price: number | undefined;
+  /** Set when the bouquet is live in the catalog, so the tile can open its quick view. */
+  shopId: string | undefined;
+}
+
 export function BouquetGallery() {
-  const { getImage } = useSiteContent();
-  const centerBouquetImg = getImage("image_bouquet_center", bouquet);
+  const { content, findProduct } = useStorefront();
+  const { show } = useProductView();
+  const centerBouquetImg = contentImage(content, "image_bouquet_center", bouquet);
+  const shown: ResolvedTile[] = tiles.map((t) => {
+    const live = t.productId ? findProduct(t.productId) : undefined;
+    const base = t.productId ? getBaseBouquet(t.productId) : undefined;
+    return {
+      ...t,
+      image: live?.image ?? base?.image ?? t.image ?? "",
+      label: live?.name ?? base?.name ?? t.label ?? "",
+      price: live?.price,
+      shopId: live?.id,
+    };
+  });
   const sectionRef = useRef<HTMLElement>(null);
   const leavesRef = useRef<HTMLDivElement>(null);
 
@@ -251,21 +268,20 @@ export function BouquetGallery() {
           data-g-reveal
           className="reveal-init rounded-full bg-kicker px-4 py-1.5 text-sm font-semibold tracking-tight text-kicker-foreground ring-1 ring-kicker-foreground/15"
         >
-          The Reelmark Bouquet
+          {content.gallery_kicker}
         </p>
         <h2
           id="bouquet-title"
           data-g-reveal
           className="reveal-init mt-4 font-display text-[clamp(2rem,min(5vw,7vh),4.25rem)] font-extrabold leading-[0.95] tracking-[-0.05em] text-balance text-foreground"
         >
-          Every stem, gathered in one place
+          {content.gallery_title}
         </h2>
         <p
           data-g-reveal
           className="reveal-init mt-3 max-w-lg text-[clamp(0.95rem,1.2vw,1.05rem)] leading-relaxed text-muted-foreground"
         >
-          Our florists cut, condition and hand-tie every bouquet the morning it ships. These are a
-          few of today's favourites, straight from the studio bench.
+          {content.gallery_desc}
         </p>
       </div>
 
@@ -298,7 +314,7 @@ export function BouquetGallery() {
 
         {/* Product photos filling the space around the bouquet */}
         <div className="absolute inset-0 z-20 hidden lg:block">
-          {tiles.map((t, i) => (
+          {shown.map((t, i) => (
             <div
               key={i}
               data-parallax={t.depth}
@@ -323,7 +339,7 @@ export function BouquetGallery() {
                     className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
                   />
                   <span className="bg-media-fade absolute inset-0" />
-                  <figcaption className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 p-2.5">
+                  <span className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 p-2.5">
                     <span className="line-clamp-2 text-[0.72rem] font-semibold leading-tight tracking-tight text-media-foreground">
                       {t.label}
                     </span>
@@ -332,7 +348,15 @@ export function BouquetGallery() {
                         {formatPrice(t.price)}
                       </span>
                     )}
-                  </figcaption>
+                  </span>
+                  {t.shopId && (
+                    <button
+                      type="button"
+                      onClick={() => t.shopId && show(t.shopId)}
+                      aria-label={`View ${t.label}`}
+                      className="absolute inset-0 cursor-pointer rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  )}
                 </span>
               </figure>
             </div>
@@ -342,11 +366,12 @@ export function BouquetGallery() {
 
       {/* Mobile / tablet: photos sit under the bouquet */}
       <div className="relative z-20 mx-auto -mt-6 grid max-w-2xl grid-cols-3 gap-3 px-6 lg:hidden">
-        {tiles.slice(0, 6).map((t, i) => (
+        {shown.slice(0, 6).map((t, i) => (
           <figure
             key={i}
             data-tile
-            className="reveal-init reel-card relative aspect-[3/4] overflow-hidden rounded-xl"
+            onClick={() => t.shopId && show(t.shopId)}
+            className={`reveal-init reel-card relative aspect-[3/4] overflow-hidden rounded-xl ${t.shopId ? "cursor-pointer" : ""}`}
           >
             <img
               src={t.image}

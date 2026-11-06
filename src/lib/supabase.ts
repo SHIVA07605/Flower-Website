@@ -1,30 +1,19 @@
 import { createClient } from "@supabase/supabase-js";
 
-// Support both VITE_ and NEXT_PUBLIC_ prefixes so user can configure either
-const supabaseUrl =
-  (typeof import.meta !== "undefined" && import.meta.env
-    ? (import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL)
-    : "") || "";
-
-const supabaseAnonKey =
-  (typeof import.meta !== "undefined" && import.meta.env
-    ? (import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
-    : "") || "";
+// Browser client: used for email/password sign-in only. Reads and writes of store data go
+// through server functions, so this client never needs elevated access.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? "";
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "";
 
 export const isSupabaseConfigured =
-  Boolean(supabaseUrl) &&
-  !supabaseUrl.includes("your-supabase-url") &&
-  Boolean(supabaseAnonKey) &&
-  !supabaseAnonKey.includes("your-supabase-anon-key");
+  supabaseUrl.startsWith("https://") &&
+  !supabaseUrl.includes("your-project") &&
+  supabaseAnonKey.length > 20 &&
+  !supabaseAnonKey.includes("your-anon-key");
 
-// Always export a valid client instance (dummy or real) so callers never crash
+// Always export a client (placeholder when unconfigured) so callers never crash.
 export const supabase = createClient(
   isSupabaseConfigured ? supabaseUrl : "https://placeholder.supabase.co",
   isSupabaseConfigured ? supabaseAnonKey : "placeholder-anon-key",
-  {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-    },
-  }
+  { auth: { persistSession: true, autoRefreshToken: true } },
 );

@@ -6,8 +6,10 @@ import { Slider } from "@/components/ui/slider";
 import { findBouquet } from "@/lib/bouquet-finder.functions";
 import { BUDGET_MAX, BUDGET_MIN, type FinderResult } from "@/lib/bouquet-finder.shared";
 import { useCart } from "./cart";
+import { formatPrice, getBaseBouquet, type Occasion } from "./products";
+import { useProductView } from "./product-view";
 import { SectionHeading } from "./SectionHeading";
-import { formatPrice, getBouquet, type Occasion } from "./products";
+import { useStorefront } from "./storefront";
 
 const occasionChips: { id: Occasion; label: string; prompt: string }[] = [
   {
@@ -45,6 +47,8 @@ const flowerChips = [
 export function BouquetFinder({ preset }: { preset: { occasion: Occasion; n: number } | null }) {
   const find = useServerFn(findBouquet);
   const { add } = useCart();
+  const { show } = useProductView();
+  const { content, findProduct } = useStorefront();
 
   const [occasion, setOccasion] = useState("");
   const [flowers, setFlowers] = useState<string[]>([]);
@@ -88,8 +92,8 @@ export function BouquetFinder({ preset }: { preset: { occasion: Occasion; n: num
     }
   };
 
-  const best = result ? getBouquet(result.bestId) : undefined;
-  const alt = result?.alternateId ? getBouquet(result.alternateId) : undefined;
+  const best = result ? findProduct(result.bestId) : undefined;
+  const alt = result?.alternateId ? findProduct(result.alternateId) : undefined;
 
   return (
     <section
@@ -106,13 +110,8 @@ export function BouquetFinder({ preset }: { preset: { occasion: Occasion; n: num
         <div className="orb bottom-0 right-[8%] h-[30rem] w-[30rem] bg-orb-gold" />
       </div>
 
-      <SectionHeading
-        id="finder-title"
-        kicker="AI Bouquet Finder"
-        title="Tell us the moment, we'll pick the stems"
-      >
-        Describe the occasion, the flowers they love and what you'd like to spend. Our AI florist
-        matches it to the best bouquet in today's studio.
+      <SectionHeading id="finder-title" kicker={content.finder_kicker} title={content.finder_title}>
+        {content.finder_desc}
       </SectionHeading>
 
       <div className="mx-auto mt-12 grid max-w-6xl gap-6 lg:grid-cols-[1.05fr_1fr]">
@@ -186,7 +185,7 @@ export function BouquetFinder({ preset }: { preset: { occasion: Occasion; n: num
             className="mt-4"
             min={BUDGET_MIN}
             max={BUDGET_MAX}
-            step={5}
+            step={50}
             value={[budget]}
             onValueChange={([v]) => setBudget(v ?? budget)}
           />
@@ -235,18 +234,25 @@ export function BouquetFinder({ preset }: { preset: { occasion: Occasion; n: num
           ) : best && result ? (
             <div className="flex flex-1 flex-col">
               <div className="relative aspect-[4/3] w-full overflow-hidden">
-                <img
-                  src={best.image}
-                  alt={best.name}
-                  width={768}
-                  height={1088}
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-                <span className="bg-media-fade absolute inset-0" />
-                <span className="absolute left-4 top-4 rounded-full bg-gold px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-fern">
+                <button
+                  type="button"
+                  onClick={() => show(best.id)}
+                  aria-label={`View ${best.name}`}
+                  className="absolute inset-0 cursor-pointer"
+                >
+                  <img
+                    src={best.image}
+                    alt={best.name}
+                    width={768}
+                    height={1088}
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                </button>
+                <span className="bg-media-fade pointer-events-none absolute inset-0" />
+                <span className="pointer-events-none absolute left-4 top-4 rounded-full bg-gold px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-fern">
                   Best match
                 </span>
-                <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-5">
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-5">
                   <div>
                     <p className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-media-foreground/80">
                       {best.maker}
@@ -282,7 +288,7 @@ export function BouquetFinder({ preset }: { preset: { occasion: Occasion; n: num
                     className="bg-cta flex items-center gap-2 rounded-full px-6 py-3 text-sm font-bold text-primary-foreground shadow-cta transition-transform hover:-translate-y-0.5"
                   >
                     <Plus className="h-4 w-4" aria-hidden="true" />
-                    Add to cart
+                    Add to bag
                   </button>
                   {alt && (
                     <button
@@ -314,7 +320,8 @@ export function BouquetFinder({ preset }: { preset: { occasion: Occasion; n: num
             <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
               <div className="flex -space-x-6">
                 {["sunflower-wrap", "blush-peony", "white-lily"].map((id, i) => {
-                  const b = getBouquet(id)!;
+                  const b = findProduct(id) ?? getBaseBouquet(id);
+                  if (!b) return null;
                   return (
                     <img
                       key={id}

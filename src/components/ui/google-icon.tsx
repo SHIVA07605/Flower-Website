@@ -20,4 +20,3 @@ export function GoogleIcon({ className = "h-4 w-4" }: { className?: string }) {
     </svg>
   );
 }
-

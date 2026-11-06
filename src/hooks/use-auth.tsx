@@ -1,412 +1,286 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
-  useCallback,
   type ReactNode,
 } from "react";
-import type { Session } from "@supabase/supabase-js";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  auth as firebaseAuth,
-  googleProvider,
-  signInWithPopup,
-  firebaseSignOut,
   onAuthStateChanged,
-  type FirebaseUser,
-} from "@/lib/firebase";
+  signInWithPopup,
+  signInWithRedirect,
+  signOut as firebaseSignOut,
+  type User as FirebaseUser,
+} from "firebase/auth";
+import type { Session } from "@supabase/supabase-js";
 import { toast } from "sonner";
 
-export interface Profile {
+import { getViewer } from "@/lib/account.functions";
+import { auth as firebaseAuth, googleProvider } from "@/lib/firebase";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import type { AuthProviderName, PublicViewer } from "@/lib/viewer";
+
+/** The signed-in identity as known in the browser (instant, unverified). */
+export interface AuthUser {
   id: string;
-  username: string | null;
-  avatar_url: string | null;
-  role: "admin" | "user";
-  created_at?: string;
+  provider: AuthProviderName;
+  email: string | null;
+  name: string;
+  avatarUrl: string | null;
 }
 
-export interface AppUser {
-  id: string;
-  email?: string | null;
-  user_metadata?: {
-    full_name?: string | null;
-    name?: string | null;
-    avatar_url?: string | null;
-    picture?: string | null;
-    role?: string | null;
-    [key: string]: any;
-  };
-}
+export type AuthMode = "login" | "signup" | "forgot" | "reset";
 
 interface AuthContextValue {
-  user: AppUser | null;
-  profile: Profile | null;
-  session: Session | null;
+  user: AuthUser | null;
+  /** The same person as verified by the server — the only source of `isAdmin`. */
+  viewer: PublicViewer | null;
   isAdmin: boolean;
+  /** Saved sessions are still being restored. */
   loading: boolean;
-  isConfigured: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, username?: string) => Promise<{ error: Error | null }>;
-  signInWithGoogle: (redirectTo?: string) => Promise<{ error: Error | null }>;
+  viewerLoading: boolean;
+  viewerError: string | null;
+  isSupabaseConfigured: boolean;
+  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  signUp: (
+    email: string,
+    password: string,
+    name: string,
+  ) => Promise<{ error: string | null; needsConfirmation: boolean }>;
+  signInWithGoogle: () => Promise<{ error: string | null }>;
+  sendPasswordReset: (email: string) => Promise<{ error: string | null }>;
+  updatePassword: (password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
-  refreshProfile: () => Promise<void>;
+  authDialog: { open: boolean; mode: AuthMode };
+  openAuth: (mode?: AuthMode) => void;
+  setAuthDialog: (state: { open: boolean; mode: AuthMode }) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<AppUser | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
+const GOOGLE_ERRORS: Record<string, string> = {
+  "auth/unauthorized-domain":
+    "Google sign-in isn't enabled for this website address yet. Add it under Firebase → Authentication → Settings → Authorized domains.",
+  "auth/operation-not-allowed":
+    "Google sign-in is turned off. Enable it under Firebase → Authentication → Sign-in method.",
+  "auth/configuration-not-found":
+    "Google sign-in is turned off. Enable it under Firebase → Authentication → Sign-in method.",
+  "auth/network-request-failed": "You seem to be offline. Check your connection and try again.",
+  "auth/too-many-requests": "Too many attempts. Please wait a minute and try again.",
+};
 
-  const buildFallbackProfile = (authUser: AppUser): Profile => {
-    const meta = authUser.user_metadata || {};
-    return {
-      id: authUser.id,
-      username:
-        meta.full_name ||
-        meta.name ||
-        meta.username ||
-        authUser.email?.split("@")[0] ||
-        "Shopper",
-      avatar_url: meta.avatar_url || meta.picture || null,
-      role:
-        authUser.email === "admin@reelmark.com" ||
-        authUser.email === "gamerzgod932@gmail.com" ||
-        meta.role === "admin"
-          ? "admin"
-          : "user",
-    };
+function friendlySupabaseError(message: string): string {
+  if (/invalid login credentials/i.test(message)) return "That email and password don't match.";
+  if (/email not confirmed/i.test(message))
+    return "Please confirm your email first — check your inbox for the link.";
+  if (/already registered|already exists/i.test(message))
+    return "That email already has an account — sign in instead.";
+  if (/rate limit|too many/i.test(message)) return "Too many attempts. Please wait a minute.";
+  if (/password/i.test(message) && /least|short|weak/i.test(message))
+    return "Use a stronger password (at least 8 characters).";
+  return message;
+}
+
+function toFirebaseUser(u: FirebaseUser): AuthUser {
+  return {
+    id: `firebase:${u.uid}`,
+    provider: "firebase",
+    email: u.email,
+    name: u.displayName || u.email?.split("@")[0] || "Shopper",
+    avatarUrl: u.photoURL,
   };
+}
 
-  const fetchProfile = useCallback(async (userId: string, authUser?: AppUser) => {
-    if (!isSupabaseConfigured) return authUser ? buildFallbackProfile(authUser) : null;
+function toSupabaseUser(session: Session): AuthUser {
+  const u = session.user;
+  const meta = (u.user_metadata ?? {}) as Record<string, unknown>;
+  const pick = (k: string) => (typeof meta[k] === "string" && meta[k] ? (meta[k] as string) : null);
+  return {
+    id: `supabase:${u.id}`,
+    provider: "supabase",
+    email: u.email ?? null,
+    name:
+      pick("full_name") ?? pick("name") ?? pick("username") ?? u.email?.split("@")[0] ?? "Shopper",
+    avatarUrl: pick("avatar_url") ?? pick("picture"),
+  };
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [firebaseReady, setFirebaseReady] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  const [supabaseReady, setSupabaseReady] = useState(!isSupabaseConfigured);
+  const [authDialog, setAuthDialog] = useState<{ open: boolean; mode: AuthMode }>({
+    open: false,
+    mode: "login",
+  });
+
+  useEffect(
+    () =>
+      onAuthStateChanged(firebaseAuth, (u) => {
+        setFirebaseUser(u);
+        setFirebaseReady(true);
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    let active = true;
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (!active) return;
+        setSession(data.session);
+        setSupabaseReady(true);
+      })
+      .catch(() => active && setSupabaseReady(true));
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, next) => {
+      if (!active) return;
+      setSession(next);
+      setSupabaseReady(true);
+      // The emailed reset link signs the shopper in; ask them for a new password.
+      if (event === "PASSWORD_RECOVERY") setAuthDialog({ open: true, mode: "reset" });
+    });
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const user = useMemo<AuthUser | null>(() => {
+    if (firebaseUser) return toFirebaseUser(firebaseUser);
+    if (session) return toSupabaseUser(session);
+    return null;
+  }, [firebaseUser, session]);
+
+  const viewerQuery = useQuery({
+    queryKey: ["viewer", user?.id ?? "guest"],
+    queryFn: () => getViewer(),
+    enabled: user !== null,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+
+  const viewer = user ? (viewerQuery.data ?? null) : null;
+  let viewerError: string | null = null;
+  if (user && viewerQuery.isError)
+    viewerError = "We couldn't reach the server to verify your account.";
+  else if (user && viewerQuery.isSuccess && viewerQuery.data === null)
+    viewerError = "The server couldn't verify your sign-in. Try signing out and in again.";
+
+  const signIn = useCallback(async (email: string, password: string) => {
+    if (!isSupabaseConfigured) return { error: "Email sign-in isn't configured yet." };
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { error: friendlySupabaseError(error.message) };
+    // One identity at a time: an email sign-in replaces a Google one.
+    if (firebaseAuth.currentUser) await firebaseSignOut(firebaseAuth).catch(() => {});
+    toast.success("Welcome back to Reelmark!");
+    return { error: null };
+  }, []);
+
+  const signUp = useCallback(async (email: string, password: string, name: string) => {
+    if (!isSupabaseConfigured) {
+      return { error: "Email sign-up isn't configured yet.", needsConfirmation: false };
+    }
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { full_name: name, username: name },
+        emailRedirectTo: `${window.location.origin}/account`,
+      },
+    });
+    if (error) return { error: friendlySupabaseError(error.message), needsConfirmation: false };
+    const needsConfirmation = !data.session;
+    if (!needsConfirmation && firebaseAuth.currentUser) {
+      await firebaseSignOut(firebaseAuth).catch(() => {});
+    }
+    toast.success(
+      needsConfirmation
+        ? "Almost there! Confirm your email from the link we just sent, then sign in."
+        : "Your Reelmark account is ready!",
+    );
+    return { error: null, needsConfirmation };
+  }, []);
+
+  const signInWithGoogle = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, username, avatar_url, role, created_at")
-        .eq("id", userId)
-        .maybeSingle();
-
-      if (error) {
-        console.warn("Could not fetch user profile:", error.message);
-        return authUser ? buildFallbackProfile(authUser) : null;
-      }
-      if (data) {
-        return data as Profile;
-      }
-      return authUser ? buildFallbackProfile(authUser) : null;
+      const result = await signInWithPopup(firebaseAuth, googleProvider);
+      if (isSupabaseConfigured) await supabase.auth.signOut({ scope: "local" }).catch(() => {});
+      toast.success(`Welcome to Reelmark, ${result.user.displayName?.split(" ")[0] || "friend"}!`);
+      return { error: null };
     } catch (err) {
-      console.warn("Profile fetch exception:", err);
-      return authUser ? buildFallbackProfile(authUser) : null;
+      const code = (err as { code?: string }).code ?? "";
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        return { error: null };
+      }
+      if (code === "auth/popup-blocked") {
+        await signInWithRedirect(firebaseAuth, googleProvider);
+        return { error: null };
+      }
+      console.warn("Google sign-in failed:", code, err);
+      return { error: GOOGLE_ERRORS[code] ?? "Google sign-in didn't work. Please try again." };
     }
   }, []);
 
-  const refreshProfile = useCallback(async () => {
-    if (!user) {
-      setProfile(null);
-      return;
-    }
-    const p = await fetchProfile(user.id, user);
-    if (p) setProfile(p);
-  }, [user, fetchProfile]);
+  const sendPasswordReset = useCallback(async (email: string) => {
+    if (!isSupabaseConfigured) return { error: "Email accounts aren't configured yet." };
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/account`,
+    });
+    if (error) return { error: friendlySupabaseError(error.message) };
+    toast.success("If that email has an account, a reset link is on its way.");
+    return { error: null };
+  }, []);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    // 1. Listen for Firebase Auth state changes
-    let unsubscribeFirebase: (() => void) | null = null;
-    if (typeof window !== "undefined") {
-      unsubscribeFirebase = onAuthStateChanged(firebaseAuth, async (fbUser: FirebaseUser | null) => {
-        if (!isMounted) return;
-        if (fbUser) {
-          const appUser: AppUser = {
-            id: fbUser.uid,
-            email: fbUser.email,
-            user_metadata: {
-              full_name: fbUser.displayName,
-              name: fbUser.displayName,
-              avatar_url: fbUser.photoURL,
-              picture: fbUser.photoURL,
-              role:
-                fbUser.email === "admin@reelmark.com" ||
-                fbUser.email === "gamerzgod932@gmail.com"
-                  ? "admin"
-                  : "user",
-            },
-          };
-          setUser(appUser);
-          setProfile({
-            id: fbUser.uid,
-            username: fbUser.displayName || fbUser.email?.split("@")[0] || "Shopper",
-            avatar_url: fbUser.photoURL,
-            role:
-              fbUser.email === "admin@reelmark.com" ||
-              fbUser.email === "gamerzgod932@gmail.com"
-                ? "admin"
-                : "user",
-          });
-          setLoading(false);
-        }
-      });
-    }
-
-    // 2. Listen for Supabase session if configured
-    if (isSupabaseConfigured) {
-      supabase.auth.getSession().then(async ({ data: { session } }) => {
-        if (!isMounted) return;
-        if (session?.user && !firebaseAuth.currentUser) {
-          setSession(session);
-          const mapped: AppUser = {
-            id: session.user.id,
-            email: session.user.email,
-            user_metadata: session.user.user_metadata,
-          };
-          setUser(mapped);
-          const p = await fetchProfile(session.user.id, mapped);
-          if (isMounted) setProfile(p);
-        }
-        setLoading(false);
-      });
-
-      const {
-        data: { subscription },
-      } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-        if (!isMounted) return;
-        if (newSession?.user && !firebaseAuth.currentUser) {
-          setSession(newSession);
-          const mapped: AppUser = {
-            id: newSession.user.id,
-            email: newSession.user.email,
-            user_metadata: newSession.user.user_metadata,
-          };
-          setUser(mapped);
-          const p = await fetchProfile(newSession.user.id, mapped);
-          if (isMounted) setProfile(p);
-        } else if (!newSession && !firebaseAuth.currentUser) {
-          if (isMounted) {
-            setSession(null);
-            setUser(null);
-            setProfile(null);
-          }
-        }
-        setLoading(false);
-      });
-
-      return () => {
-        isMounted = false;
-        subscription.unsubscribe();
-        if (unsubscribeFirebase) unsubscribeFirebase();
-      };
-    } else {
-      setLoading(false);
-      return () => {
-        isMounted = false;
-        if (unsubscribeFirebase) unsubscribeFirebase();
-      };
-    }
-  }, [fetchProfile]);
-
-  const signIn = useCallback(
-    async (email: string, password: string) => {
-      if (!isSupabaseConfigured) {
-        const err = new Error(
-          "Supabase is not configured yet. Please add your credentials to .env.local"
-        );
-        toast.error(err.message);
-        return { error: err };
-      }
-
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        toast.error(error.message);
-        return { error };
-      }
-
-      toast.success("Welcome back to Reelmark!");
-      if (data.user) {
-        const mapped: AppUser = {
-          id: data.user.id,
-          email: data.user.email,
-          user_metadata: data.user.user_metadata,
-        };
-        setUser(mapped);
-        const p = await fetchProfile(data.user.id, mapped);
-        setProfile(p);
-      }
-      return { error: null };
-    },
-    [fetchProfile]
-  );
-
-  const signUp = useCallback(
-    async (email: string, password: string, username?: string) => {
-      if (!isSupabaseConfigured) {
-        const err = new Error(
-          "Supabase is not configured yet. Please add your credentials to .env.local"
-        );
-        toast.error(err.message);
-        return { error: err };
-      }
-
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            username: username || email.split("@")[0],
-          },
-        },
-      });
-
-      if (error) {
-        toast.error(error.message);
-        return { error };
-      }
-
-      if (data.session) {
-        toast.success("Account created successfully!");
-        if (data.user) {
-          const mapped: AppUser = {
-            id: data.user.id,
-            email: data.user.email,
-            user_metadata: data.user.user_metadata,
-          };
-          setUser(mapped);
-          const p = await fetchProfile(data.user.id, mapped);
-          setProfile(p);
-        }
-      } else {
-        toast.success(
-          "Sign up successful! Please check your email inbox to confirm your account."
-        );
-      }
-
-      return { error: null };
-    },
-    [fetchProfile]
-  );
-
-  const signInWithGoogle = useCallback(async (redirectTo?: string) => {
-    // 1. Try Firebase Google Popup first (Instant popup on localhost, zero redirect setup required!)
-    try {
-      const result = await signInWithPopup(firebaseAuth, googleProvider);
-      const fbUser = result.user;
-      const appUser: AppUser = {
-        id: fbUser.uid,
-        email: fbUser.email,
-        user_metadata: {
-          full_name: fbUser.displayName,
-          name: fbUser.displayName,
-          avatar_url: fbUser.photoURL,
-          picture: fbUser.photoURL,
-          role:
-            fbUser.email === "admin@reelmark.com" ||
-            fbUser.email === "gamerzgod932@gmail.com"
-              ? "admin"
-              : "user",
-        },
-      };
-      setUser(appUser);
-      setProfile({
-        id: fbUser.uid,
-        username: fbUser.displayName || fbUser.email?.split("@")[0] || "Shopper",
-        avatar_url: fbUser.photoURL,
-        role:
-          fbUser.email === "admin@reelmark.com" ||
-          fbUser.email === "gamerzgod932@gmail.com"
-            ? "admin"
-            : "user",
-      });
-      toast.success(`Welcome to Reelmark, ${fbUser.displayName || "Shopper"}!`);
-      return { error: null };
-    } catch (fbErr: any) {
-      // User closed the popup intentionally
-      if (fbErr.code === "auth/popup-closed-by-user") {
-        return { error: null };
-      }
-
-      console.warn("Firebase popup auth attempt:", fbErr.code, fbErr.message);
-
-      // If Google provider is not yet toggled on in Firebase Console
-      if (
-        fbErr.code === "auth/configuration-not-found" ||
-        fbErr.code === "auth/operation-not-allowed"
-      ) {
-        toast.error(
-          "Google Sign-In is not enabled yet in your Firebase Console. Go to Authentication → Sign-in method → Google and turn it ON."
-        );
-        return { error: fbErr };
-      }
-
-      // If user has Supabase Google provider enabled, try fallback
-      if (isSupabaseConfigured && fbErr.code !== "auth/unauthorized-domain") {
-        try {
-          const defaultRedirect =
-            typeof window !== "undefined"
-              ? `${window.location.origin}${window.location.pathname}`
-              : "http://localhost:5173/";
-          const targetUrl = redirectTo || defaultRedirect;
-
-          const { error } = await supabase.auth.signInWithOAuth({
-            provider: "google",
-            options: {
-              redirectTo: targetUrl,
-              queryParams: { access_type: "offline", prompt: "consent" },
-            },
-          });
-          if (error) {
-            toast.error(`Google Sign-In: ${error.message}`);
-            return { error };
-          }
-          return { error: null };
-        } catch {}
-      }
-
-      toast.error(fbErr.message || "Failed to sign in with Google");
-      return { error: fbErr };
-    }
+  const updatePassword = useCallback(async (password: string) => {
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) return { error: friendlySupabaseError(error.message) };
+    toast.success("Your password has been updated.");
+    return { error: null };
   }, []);
 
   const signOut = useCallback(async () => {
-    try {
-      await firebaseSignOut(firebaseAuth);
-    } catch {}
-    if (isSupabaseConfigured) {
-      try {
-        await supabase.auth.signOut();
-      } catch {}
-    }
+    await Promise.allSettled([
+      firebaseSignOut(firebaseAuth),
+      isSupabaseConfigured ? supabase.auth.signOut() : Promise.resolve(),
+    ]);
+    setFirebaseUser(null);
     setSession(null);
-    setUser(null);
-    setProfile(null);
-    toast.success("Signed out successfully");
-  }, []);
+    for (const key of ["viewer", "account", "admin"])
+      queryClient.removeQueries({ queryKey: [key] });
+    toast.success("Signed out");
+  }, [queryClient]);
 
-  const isAdmin =
-    profile?.role === "admin" ||
-    user?.user_metadata?.role === "admin" ||
-    user?.email === "admin@reelmark.com" ||
-    user?.email === "gamerzgod932@gmail.com";
+  const openAuth = useCallback(
+    (mode: AuthMode = "login") => setAuthDialog({ open: true, mode }),
+    [],
+  );
 
   const value: AuthContextValue = {
     user,
-    profile,
-    session,
-    isAdmin,
-    loading,
-    isConfigured: isSupabaseConfigured,
+    viewer,
+    isAdmin: viewer?.isAdmin === true,
+    loading: !firebaseReady || !supabaseReady,
+    viewerLoading: user !== null && viewerQuery.isPending,
+    viewerError,
+    isSupabaseConfigured,
     signIn,
     signUp,
     signInWithGoogle,
+    sendPasswordReset,
+    updatePassword,
     signOut,
-    refreshProfile,
+    authDialog,
+    openAuth,
+    setAuthDialog,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -414,8 +288,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
+  if (!context) throw new Error("useAuth must be used within an AuthProvider");
   return context;
 }

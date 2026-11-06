@@ -12,7 +12,7 @@ const inputSchema = z.object({
 export type FinderResponse = { ok: true; result: FinderResult } | { ok: false; error: string };
 
 export const findBouquet = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => inputSchema.parse(data))
+  .validator((data: unknown) => inputSchema.parse(data))
   .handler(async ({ data }): Promise<FinderResponse> => {
     const { recommendBouquet, FinderError } = await import("./bouquet-finder.server");
     try {

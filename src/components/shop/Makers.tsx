@@ -2,33 +2,34 @@ import maker1 from "@/assets/makers/maker-1.jpg";
 import maker2 from "@/assets/makers/maker-2.jpg";
 import maker3 from "@/assets/makers/maker-3.jpg";
 import maker4 from "@/assets/makers/maker-4.jpg";
+import { contentImage } from "@/lib/site-content";
 import { SectionHeading } from "./SectionHeading";
-import { useSiteContent } from "@/hooks/use-site-content";
+import { useStorefront } from "./storefront";
 
 export function Makers() {
-  const { getText, getImage } = useSiteContent();
+  const { content } = useStorefront();
 
   const makersList = [
     {
-      photo: getImage("image_maker_1", maker1),
+      photo: contentImage(content, "image_maker_1", maker1),
       name: "Rosa Alvarez",
       studio: "Petalcraft",
       craft: "Garden roses & romantic posies",
     },
     {
-      photo: getImage("image_maker_2", maker2),
+      photo: contentImage(content, "image_maker_2", maker2),
       name: "Theo Marsh",
       studio: "Field & Stem",
       craft: "Dried stems & golden wraps",
     },
     {
-      photo: getImage("image_maker_3", maker3),
+      photo: contentImage(content, "image_maker_3", maker3),
       name: "Meera Iyer",
       studio: "Stillwater",
       craft: "Quiet, all-white sympathy work",
     },
     {
-      photo: getImage("image_maker_4", maker4),
+      photo: contentImage(content, "image_maker_4", maker4),
       name: "Ama Boateng",
       studio: "Wildroot",
       craft: "Wild, just-picked meadow jars",
@@ -42,15 +43,8 @@ export function Makers() {
       aria-labelledby="makers-title"
       className="relative px-4 py-24 sm:px-8"
     >
-      <SectionHeading
-        id="makers-title"
-        kicker={getText("makers_kicker", "Meet the makers")}
-        title={getText("makers_title", "Real florists, real benches, real hands")}
-      >
-        {getText(
-          "makers_desc",
-          "Every Reelmark bouquet is made by an independent studio in your city, never a warehouse."
-        )}
+      <SectionHeading id="makers-title" kicker={content.makers_kicker} title={content.makers_title}>
+        {content.makers_desc}
       </SectionHeading>
 
       <div className="mx-auto mt-12 grid max-w-6xl grid-cols-2 gap-4 sm:gap-6 lg:grid-cols-4">
