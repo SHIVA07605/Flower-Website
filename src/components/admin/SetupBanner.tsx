@@ -54,7 +54,9 @@ export function SetupBanner({ setup }: { setup: SetupStatus }) {
     );
   }
   if (!setup.aiConfigured) {
-    notes.push("The AI bouquet finder needs LOVABLE_API_KEY in the server environment.");
+    notes.push(
+      "The bouquet finder is using simple rule-based matching. Add LOVABLE_API_KEY to the server environment to let the AI florist choose and write card notes.",
+    );
   }
 
   if (!blocking && notes.length === 0) return null;

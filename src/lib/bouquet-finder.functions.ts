@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { BUDGET_MAX, BUDGET_MIN, type FinderResult } from "./bouquet-finder.shared";
+import { validateWith } from "./result";
 
 const inputSchema = z.object({
   occasion: z.string().trim().min(2, "Tell us a little about the occasion").max(400),
@@ -12,11 +13,12 @@ const inputSchema = z.object({
 export type FinderResponse = { ok: true; result: FinderResult } | { ok: false; error: string };
 
 export const findBouquet = createServerFn({ method: "POST" })
-  .validator((data: unknown) => inputSchema.parse(data))
+  .validator(validateWith(inputSchema))
   .handler(async ({ data }): Promise<FinderResponse> => {
+    if (!data.ok) return data;
     const { recommendBouquet, FinderError } = await import("./bouquet-finder.server");
     try {
-      return { ok: true, result: await recommendBouquet(data) };
+      return { ok: true, result: await recommendBouquet(data.value) };
     } catch (error) {
       if (error instanceof FinderError) return { ok: false, error: error.message };
       console.error(error);

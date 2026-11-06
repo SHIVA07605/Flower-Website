@@ -59,7 +59,7 @@ Copy `.env.example` to `.env.local` and fill it in. The important server-only va
 | --- | --- |
 | `SUPABASE_SERVICE_ROLE_KEY` | Lets the server save orders, reviews and admin edits |
 | `ADMIN_EMAILS` | Comma-separated emails allowed into `/admin` |
-| `LOVABLE_API_KEY` | Powers the AI bouquet finder |
+| `LOVABLE_API_KEY` | Lets the AI florist pick bouquets and write card notes (without it the finder uses rule-based matching) |
 
 ### 3. Create the database tables (once)
 Open **Supabase → SQL Editor**, paste
@@ -82,7 +82,7 @@ Settings → Authorized domains** so Google sign-in works there.
 
 ## 🧪 Checks
 ```bash
-npm test        # vitest: pricing, catalog merge, checkout validation, checkout UI flow
+npm test        # vitest: pricing, catalog merge, checkout validation and UI, server order placement, finder matching
 npm run lint
 npx tsc --noEmit
 ```

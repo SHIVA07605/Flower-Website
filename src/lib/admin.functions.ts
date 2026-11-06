@@ -18,7 +18,7 @@ export const getAdminDashboard = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { run } = await import("./server/db.server");
     const { getDashboard } = await import("./server/admin.server");
-    return run(() => getDashboard(context.viewer));
+    return run(() => getDashboard(context.viewer), { audience: "admin" });
   });
 
 export const saveSiteContent = createServerFn({ method: "POST" })
@@ -28,7 +28,7 @@ export const saveSiteContent = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { saveContent } = await import("./server/admin.server");
-    return run(() => saveContent(context.viewer, data.value));
+    return run(() => saveContent(context.viewer, data.value), { audience: "admin" });
   });
 
 export const uploadMedia = createServerFn({ method: "POST" })
@@ -43,7 +43,7 @@ export const uploadMedia = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { uploadMedia: upload } = await import("./server/admin.server");
-    return run(() => upload(context.viewer, data.value));
+    return run(() => upload(context.viewer, data.value), { audience: "admin" });
   });
 
 export const listAdminProducts = createServerFn({ method: "GET" })
@@ -51,7 +51,7 @@ export const listAdminProducts = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { run } = await import("./server/db.server");
     const { listProducts } = await import("./server/admin.server");
-    return run(() => listProducts(context.viewer));
+    return run(() => listProducts(context.viewer), { audience: "admin" });
   });
 
 export const saveProduct = createServerFn({ method: "POST" })
@@ -61,7 +61,7 @@ export const saveProduct = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { saveProduct: save } = await import("./server/admin.server");
-    return run(() => save(context.viewer, data.value));
+    return run(() => save(context.viewer, data.value), { audience: "admin" });
   });
 
 const idSchema = z.object({ id: z.string().min(1).max(200) });
@@ -73,7 +73,7 @@ export const removeProduct = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { removeProduct: remove } = await import("./server/admin.server");
-    return run(() => remove(context.viewer, data.value.id));
+    return run(() => remove(context.viewer, data.value.id), { audience: "admin" });
   });
 
 const orderFilterSchema = z.object({
@@ -88,7 +88,7 @@ export const listAdminOrders = createServerFn({ method: "GET" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { listOrders } = await import("./server/admin.server");
-    return run(() => listOrders(context.viewer, data.value));
+    return run(() => listOrders(context.viewer, data.value), { audience: "admin" });
   });
 
 export const updateAdminOrder = createServerFn({ method: "POST" })
@@ -98,7 +98,7 @@ export const updateAdminOrder = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { updateOrder } = await import("./server/admin.server");
-    return run(() => updateOrder(context.viewer, data.value));
+    return run(() => updateOrder(context.viewer, data.value), { audience: "admin" });
   });
 
 export const listAdminReviews = createServerFn({ method: "GET" })
@@ -106,7 +106,7 @@ export const listAdminReviews = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { run } = await import("./server/db.server");
     const { listReviews } = await import("./server/admin.server");
-    return run(() => listReviews(context.viewer));
+    return run(() => listReviews(context.viewer), { audience: "admin" });
   });
 
 export const moderateReview = createServerFn({ method: "POST" })
@@ -116,7 +116,7 @@ export const moderateReview = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { moderateReview: moderate } = await import("./server/admin.server");
-    return run(() => moderate(context.viewer, data.value));
+    return run(() => moderate(context.viewer, data.value), { audience: "admin" });
   });
 
 export const deleteReview = createServerFn({ method: "POST" })
@@ -126,7 +126,7 @@ export const deleteReview = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { deleteReview: remove } = await import("./server/admin.server");
-    return run(() => remove(context.viewer, data.value.id));
+    return run(() => remove(context.viewer, data.value.id), { audience: "admin" });
   });
 
 export const listAdminCustomers = createServerFn({ method: "GET" })
@@ -134,7 +134,7 @@ export const listAdminCustomers = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { run } = await import("./server/db.server");
     const { listCustomers } = await import("./server/admin.server");
-    return run(() => listCustomers(context.viewer));
+    return run(() => listCustomers(context.viewer), { audience: "admin" });
   });
 
 export const setCustomerRole = createServerFn({ method: "POST" })
@@ -144,5 +144,5 @@ export const setCustomerRole = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { setCustomerRole: setRole } = await import("./server/admin.server");
-    return run(() => setRole(context.viewer, data.value));
+    return run(() => setRole(context.viewer, data.value), { audience: "admin" });
   });

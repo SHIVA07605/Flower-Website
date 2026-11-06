@@ -3,7 +3,9 @@ import { APICallError, NoObjectGeneratedError, Output, streamText } from "ai";
 import { z } from "zod";
 
 import { createLovableAiGatewayRunIdFetch } from "./ai/run-id.server";
+import { matchBouquet } from "./bouquet-finder.match";
 import { pickCandidates, type FinderInput, type FinderResult } from "./bouquet-finder.shared";
+import type { CatalogItem } from "./catalog";
 import { loadCatalog } from "./server/store.server";
 
 const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1";
@@ -32,15 +34,38 @@ Only use ids that appear in the catalog. Weigh, in order: fit for the occasion a
 Sympathy calls for calm, respectful arrangements. Romance favours roses and peonies. Keep it warm and specific.
 headline: max 8 words. reason: 2 short sentences referencing the shopper's words. cardNote: a gift card message of max 20 words matching the occasion.`;
 
+/**
+ * Recommends a bouquet the shopper can afford. The AI florist chooses when LOVABLE_API_KEY is
+ * set; if it isn't, or the gateway fails (credits, rate limits, outages), the rule-based
+ * matcher answers instead so the shopper never hits a dead end. Both only see candidates
+ * that `pickCandidates` already filtered to the budget.
+ */
 export async function recommendBouquet(input: FinderInput): Promise<FinderResult> {
-  const apiKey = process.env["LOVABLE_API_KEY"];
-  if (!apiKey) throw new FinderError("The bouquet finder isn't configured yet.", 500);
-
   // The same live catalog the storefront shows (admin prices, hidden and added bouquets).
   const { candidates, overBudget } = pickCandidates(await loadCatalog(), input.budget);
   if (candidates.length === 0) {
     throw new FinderError("The studio has no bouquets available right now.", 503);
   }
+
+  const apiKey = process.env["LOVABLE_API_KEY"];
+  if (!apiKey) return matchBouquet(candidates, input, overBudget);
+  try {
+    return await askAiFlorist(apiKey, candidates, input, overBudget);
+  } catch (error) {
+    console.warn(
+      "[finder] AI florist unavailable, using rule-based matching:",
+      error instanceof Error ? error.message : error,
+    );
+    return matchBouquet(candidates, input, overBudget);
+  }
+}
+
+async function askAiFlorist(
+  apiKey: string,
+  candidates: CatalogItem[],
+  input: FinderInput,
+  overBudget: boolean,
+): Promise<FinderResult> {
   const catalog = candidates
     .map(
       (b) =>
@@ -83,32 +108,17 @@ export async function recommendBouquet(input: FinderInput): Promise<FinderResult
     parsed = await result.output;
   } catch (error) {
     if (NoObjectGeneratedError.isInstance(error) && error.text) {
-      try {
-        parsed = resultSchema.parse(JSON.parse(error.text));
-      } catch {
-        throw new FinderError("Our florist got tongue-tied. Please try again.", 502);
-      }
+      parsed = resultSchema.parse(JSON.parse(error.text));
     } else if (APICallError.isInstance(error)) {
       const status = error.statusCode ?? 502;
-      if (status === 429)
-        throw new FinderError("Lots of shoppers right now. Please try again in a moment.", 429);
-      if (status === 402)
-        throw new FinderError(
-          "AI credits have run out for this shop. Please add credits to keep the finder running.",
-          402,
-        );
-      if (status === 403)
-        throw new FinderError("The bouquet finder isn't available right now.", 403);
-      throw new FinderError(
-        "The bouquet finder couldn't reach our florist. Please try again.",
-        status,
+      // Logged for the admin; the shopper gets the rule-based match instead.
+      throw new Error(
+        status === 402
+          ? "AI gateway 402: credits have run out — add credits to re-enable the AI florist"
+          : `AI gateway ${status}: ${error.message}`,
       );
     } else {
-      console.error("bouquet finder failed", error);
-      throw new FinderError(
-        "The bouquet finder couldn't reach our florist. Please try again.",
-        502,
-      );
+      throw error;
     }
   }
 

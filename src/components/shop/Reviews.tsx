@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Loader2, MessageSquarePlus, Star } from "lucide-react";
 import { toast } from "sonner";
 
@@ -68,8 +68,10 @@ const testimonials = [
 
 export function Reviews() {
   const { content, reviews, catalog, findProduct } = useStorefront();
-  const { user, openAuth } = useAuth();
+  const { user, openAuth, authDialog } = useAuth();
   const [modalOpen, setModalOpen] = useState(false);
+  /** A guest tapped "Write a review" and was sent to sign in first. */
+  const [resumeAfterSignIn, setResumeAfterSignIn] = useState(false);
   const [productId, setProductId] = useState("");
   const [body, setBody] = useState("");
   const [rating, setRating] = useState(5);
@@ -89,16 +91,36 @@ export function Reviews() {
   const all = [...shopperReviews, ...testimonials];
   const loop = [...all, ...all];
 
-  const startReview = () => {
-    if (!user) {
-      toast.info("Sign in to share your review.");
-      openAuth("login");
-      return;
-    }
+  const openReviewForm = useCallback(() => {
     setProductId((id) => id || catalog[0]?.id || "");
     setError(null);
     setModalOpen(true);
+  }, [catalog]);
+
+  const startReview = () => {
+    if (!user) {
+      toast.info("Sign in to share your review.");
+      setResumeAfterSignIn(true);
+      openAuth("login");
+      return;
+    }
+    openReviewForm();
   };
+
+  // Pick up where the guest left off once they've signed in. If they close the sign-in
+  // dialog without signing in, forget it (after a moment, as the session can land just
+  // after the dialog closes).
+  useEffect(() => {
+    if (!resumeAfterSignIn) return;
+    if (user) {
+      setResumeAfterSignIn(false);
+      openReviewForm();
+      return;
+    }
+    if (authDialog.open) return;
+    const timer = setTimeout(() => setResumeAfterSignIn(false), 2000);
+    return () => clearTimeout(timer);
+  }, [resumeAfterSignIn, user, authDialog.open, openReviewForm]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();

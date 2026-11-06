@@ -39,6 +39,8 @@ interface CartContextValue {
 const CartContext = createContext<CartContextValue | null>(null);
 const STORAGE_KEY = "reelmark_cart_v1";
 const MAX_QTY = 20;
+/** One "added to your bag" toast at a time: later adds replace it instead of stacking. */
+const ADDED_TOAST_ID = "cart-added";
 
 function readStoredCart(): StoredLine[] {
   try {
@@ -76,6 +78,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
   }, [stored, hydrated]);
 
+  // Once the bag is open the "View bag" toast is pointless, and on phones it would sit on
+  // top of the checkout button.
+  useEffect(() => {
+    if (isOpen) toast.dismiss(ADDED_TOAST_ID);
+  }, [isOpen]);
+
   const openCart = useCallback(() => setOpen(true), []);
 
   const add = useCallback(
@@ -93,6 +101,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         return [...prev, { id, qty: Math.min(MAX_QTY, qty) }];
       });
       toast.success(`${item.name} added to your bag`, {
+        id: ADDED_TOAST_ID,
         action: { label: "View bag", onClick: () => setOpen(true) },
       });
     },
