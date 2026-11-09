@@ -23,7 +23,8 @@ checkout, shopper accounts and an admin dashboard — all connected through one 
   mark payments, internal notes, printable invoices.
 - Bouquets & prices: edit any bouquet, upload photos, hide/show, best-seller flags, add new ones.
 - Copy, pictures, billing (delivery fees, GST, free-delivery minimum) and the promo code.
-- Review moderation, customers (with admin role management) and newsletter subscribers.
+- Review moderation, customers and newsletter subscribers.
+- Admin access: owners give other Google accounts access to the dashboard for 1, 7 or 30 days, until a chosen date, or with no end date, and can remove it at any time.
 
 Everything an admin saves is live for every shopper on their next page load (and instantly in
 other tabs of the same browser).
@@ -58,7 +59,7 @@ Copy `.env.example` to `.env.local` and fill it in. The important server-only va
 | Variable | Why |
 | --- | --- |
 | `SUPABASE_SERVICE_ROLE_KEY` | Lets the server save orders, reviews and admin edits |
-| `ADMIN_EMAILS` | Comma-separated emails allowed into `/admin` |
+| `ADMIN_EMAILS` | Comma-separated owner emails. Owners can give other Google accounts admin access, for a set time or with no end date, from the **Admin access** tab |
 | `LOVABLE_API_KEY` | Lets the AI florist pick bouquets and write card notes (without it the finder uses rule-based matching) |
 
 ### 3. Create the database tables (once)

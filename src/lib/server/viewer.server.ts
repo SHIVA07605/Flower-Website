@@ -53,6 +53,43 @@ async function verifyFirebaseToken(token: string): Promise<Identity | null> {
   }
 }
 
+/**
+ * Whether Supabase makes people click a confirmation link before an email counts as theirs.
+ * With "Confirm email" switched off, Supabase marks every sign-up as confirmed, so anyone
+ * could register an admin's address (or a shopper's, to read their guest orders). Checked
+ * from the live auth settings rather than assumed; fails closed if they can't be read.
+ */
+let confirmsEmails: { value: boolean; expires: number } | undefined;
+const SETTINGS_TTL_MS = 10 * 60_000;
+
+export async function supabaseConfirmsEmails(): Promise<boolean> {
+  const now = Date.now();
+  if (confirmsEmails && confirmsEmails.expires > now) return confirmsEmails.value;
+  const { supabaseUrl, supabaseAnonKey } = serverEnv();
+  let value = false;
+  if (supabaseUrl && supabaseAnonKey) {
+    try {
+      const res = await fetch(`${supabaseUrl}/auth/v1/settings`, {
+        headers: { apikey: supabaseAnonKey },
+      });
+      if (res.ok) {
+        const settings = (await res.json()) as { mailer_autoconfirm?: unknown };
+        value = settings.mailer_autoconfirm === false;
+        if (!value) {
+          console.warn(
+            "[auth] Supabase 'Confirm email' is off: email/password accounts won't be trusted for admin access or order lookups by email.",
+          );
+        }
+      }
+    } catch (error) {
+      console.warn("[auth] couldn't read Supabase auth settings:", (error as Error).message);
+    }
+  }
+  // Remember a failed lookup only briefly so a blip doesn't lock admins out for long.
+  confirmsEmails = { value, expires: now + (value ? SETTINGS_TTL_MS : 30_000) };
+  return value;
+}
+
 async function verifySupabaseToken(token: string): Promise<Identity | null> {
   const db = getServiceDb() ?? getAnonDb();
   if (!db) return null;
@@ -64,7 +101,7 @@ async function verifySupabaseToken(token: string): Promise<Identity | null> {
     provider: "supabase",
     uid: user.id,
     email: user.email?.toLowerCase() ?? null,
-    emailVerified: Boolean(user.email_confirmed_at),
+    emailVerified: Boolean(user.email_confirmed_at) && (await supabaseConfirmsEmails()),
     name: str(meta["full_name"]) ?? str(meta["name"]) ?? str(meta["username"]),
     avatarUrl: str(meta["avatar_url"]) ?? str(meta["picture"]),
   };
@@ -99,6 +136,28 @@ async function syncProfile(
   return data?.role === "admin" ? "admin" : "user";
 }
 
+/**
+ * Admin access an owner granted to this email (see the admin_grants table). Returns when it
+ * ends: null for "until removed", undefined when there is no active grant.
+ */
+async function activeGrant(email: string | null): Promise<Date | null | undefined> {
+  const db = getServiceDb();
+  if (!db || !email) return undefined;
+  const { data, error } = await db
+    .from("admin_grants")
+    .select("expires_at")
+    .eq("email", email)
+    .maybeSingle();
+  if (error) {
+    if (!isMissingTable(error)) console.warn("[auth] admin grant lookup failed:", error.message);
+    return undefined;
+  }
+  if (!data) return undefined;
+  if (data.expires_at === null) return null;
+  const until = new Date(data.expires_at as string);
+  return until.getTime() > Date.now() ? until : undefined;
+}
+
 async function buildViewer(provider: AuthProviderName, token: string): Promise<Viewer | null> {
   const identity =
     provider === "supabase" ? await verifySupabaseToken(token) : await verifyFirebaseToken(token);
@@ -106,9 +165,13 @@ async function buildViewer(provider: AuthProviderName, token: string): Promise<V
 
   const id = `${identity.provider}:${identity.uid}`;
   const { adminEmails } = serverEnv();
-  const allowlisted =
-    identity.email !== null && identity.emailVerified && adminEmails.includes(identity.email);
-  const role = await syncProfile(identity, id);
+  // Every admin route depends on the email really belonging to the caller.
+  const verifiedEmail = identity.emailVerified ? identity.email : null;
+  const isOwner = verifiedEmail !== null && adminEmails.includes(verifiedEmail);
+  const [role, grant] = await Promise.all([
+    syncProfile(identity, id),
+    isOwner ? Promise.resolve(undefined) : activeGrant(verifiedEmail),
+  ]);
 
   return {
     id,
@@ -118,7 +181,9 @@ async function buildViewer(provider: AuthProviderName, token: string): Promise<V
     emailVerified: identity.emailVerified,
     name: identity.name ?? identity.email?.split("@")[0] ?? "Shopper",
     avatarUrl: identity.avatarUrl,
-    isAdmin: allowlisted || role === "admin",
+    isOwner,
+    isAdmin: isOwner || role === "admin" || grant !== undefined,
+    adminUntil: !isOwner && role !== "admin" && grant ? grant.toISOString() : null,
   };
 }
 
@@ -155,6 +220,11 @@ export async function resolveViewer(
   return viewer;
 }
 
+/** Re-check everyone on their next request, e.g. after admin access was removed. */
+export function forgetCachedViewers() {
+  cache.clear();
+}
+
 export function toPublicViewer(viewer: Viewer): PublicViewer {
   return {
     id: viewer.id,
@@ -163,6 +233,8 @@ export function toPublicViewer(viewer: Viewer): PublicViewer {
     name: viewer.name,
     avatarUrl: viewer.avatarUrl,
     isAdmin: viewer.isAdmin,
+    isOwner: viewer.isOwner,
+    adminUntil: viewer.adminUntil,
   };
 }
 
@@ -173,6 +245,23 @@ export function requireViewer(viewer: Viewer | null): Viewer {
 
 export function requireAdmin(viewer: Viewer | null): Viewer {
   const v = requireViewer(viewer);
-  if (!v.isAdmin) throw new ServiceError("This account doesn't have admin access.", 403);
+  // A time-limited grant stops working the moment it ends, even mid-session.
+  const expired = v.adminUntil !== null && new Date(v.adminUntil).getTime() <= Date.now();
+  if (!v.isAdmin || expired) {
+    throw new ServiceError(
+      expired
+        ? "Your admin access has ended. Ask the owner to extend it."
+        : "This account doesn't have admin access.",
+      403,
+    );
+  }
+  return v;
+}
+
+/** Owners (the ADMIN_EMAILS setting) are the only ones who can decide who else is an admin. */
+export function requireOwner(viewer: Viewer | null): Viewer {
+  const v = requireAdmin(viewer);
+  if (!v.isOwner)
+    throw new ServiceError("Only the shop owner can change who has admin access.", 403);
   return v;
 }

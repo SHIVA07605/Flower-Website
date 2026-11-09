@@ -24,7 +24,11 @@ export const subscribeNewsletter = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { subscribeToNewsletter } = await import("./server/store.server");
-    return run(() => subscribeToNewsletter(data.value.email));
+    const { clientAddress, enforceLimit, LIMITS } = await import("./server/rate-limit.server");
+    return run(async () => {
+      await enforceLimit(LIMITS.newsletter, await clientAddress());
+      return subscribeToNewsletter(data.value.email);
+    });
   });
 
 /** Signed-in shoppers only; reviews wait for admin approval before they're published. */
@@ -36,5 +40,10 @@ export const submitReview = createServerFn({ method: "POST" })
     const { run } = await import("./server/db.server");
     const { createReview } = await import("./server/store.server");
     const { requireViewer } = await import("./server/viewer.server");
-    return run(() => createReview(requireViewer(context.viewer), data.value));
+    const { enforceLimit, LIMITS } = await import("./server/rate-limit.server");
+    return run(async () => {
+      const viewer = requireViewer(context.viewer);
+      await enforceLimit(LIMITS.review, viewer.id);
+      return createReview(viewer, data.value);
+    });
   });

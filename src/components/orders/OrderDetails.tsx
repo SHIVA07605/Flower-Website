@@ -165,10 +165,12 @@ export function DeliveryInfo({ order }: { order: OrderRecord }) {
         {formatDeliveryDate(order.deliveryDate)} · {DELIVERY_SLOT_LABEL[order.deliverySlot]}
       </p>
       <p className="text-muted-foreground">
-        For {order.recipientName} ({order.recipientPhone})
+        For {order.recipientName}
+        {order.recipientPhone && ` (${order.recipientPhone})`}
       </p>
+      {/* Guest tracking leaves out the street address; show what's there. */}
       <p className="text-muted-foreground">
-        {order.address}, {order.city} {order.pincode}
+        {[order.address, `${order.city} ${order.pincode}`.trim()].filter(Boolean).join(", ")}
       </p>
       {order.cardMessage && (
         <p className="mt-2 rounded-xl bg-gold-soft px-3 py-2 font-hand text-lg leading-6 text-foreground">

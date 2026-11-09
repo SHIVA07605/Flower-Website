@@ -3,7 +3,17 @@ import { AlertTriangle, Check, Copy, ExternalLink, Info } from "lucide-react";
 import { toast } from "sonner";
 
 import type { SetupStatus } from "@/lib/admin-types";
-import setupSql from "../../../supabase/migrations/20261106120000_reelmark_schema.sql?raw";
+// Every migration, oldest first (file names start with a timestamp). Each one is safe to
+// re-run, so pasting the whole lot into the SQL editor brings any database up to date.
+const migrations = import.meta.glob<string>("../../../supabase/migrations/*.sql", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+const setupSql = Object.keys(migrations)
+  .sort()
+  .map((path) => `-- ${path.split("/").pop()}\n${migrations[path]}`)
+  .join("\n\n");
 
 const projectRef = import.meta.env.VITE_SUPABASE_URL?.match(
   /^https:\/\/([a-z0-9]+)\.supabase\.co/,
@@ -47,6 +57,11 @@ export function SetupBanner({ setup }: { setup: SetupStatus }) {
   const notes: string[] = [];
   if (setup.dbReady && !setup.storageReady) {
     notes.push("Picture uploads need the site-media storage bucket — run the setup SQL once more.");
+  }
+  if (setup.dbReady && !setup.rateLimitsReady) {
+    notes.push(
+      "Run the setup SQL once more to add the rate_limits table, so limits on orders, order tracking and the bouquet finder are shared across all servers.",
+    );
   }
   if (!setup.adminEmailsFromEnv) {
     notes.push(

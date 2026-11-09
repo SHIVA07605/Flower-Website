@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Loader2, PackageSearch, RefreshCw, Star } from "lucide-react";
@@ -7,23 +7,22 @@ import { OrderCard } from "@/components/orders/OrderDetails";
 import { UserMenu } from "@/components/shop/UserMenu";
 import { useAuth } from "@/hooks/use-auth";
 import { getMyAccount, trackOrder } from "@/lib/account.functions";
+import { lastOrderEmail } from "@/lib/last-order";
 import type { OrderRecord } from "@/lib/orders";
 import { unwrap } from "@/lib/result";
 import type { ReviewStatus } from "@/lib/reviews";
 
+/** Only the order number travels in the URL; the email never does (see lib/last-order). */
 interface AccountSearch {
   order?: string;
-  email?: string;
 }
 
 export const Route = createFileRoute("/account")({
   head: () => ({
     meta: [{ title: "My orders — Reelmark" }, { name: "robots", content: "noindex" }],
   }),
-  validateSearch: (search: Record<string, unknown>): AccountSearch => ({
-    ...(typeof search["order"] === "string" ? { order: search["order"] } : {}),
-    ...(typeof search["email"] === "string" ? { email: search["email"] } : {}),
-  }),
+  validateSearch: (search: Record<string, unknown>): AccountSearch =>
+    typeof search["order"] === "string" ? { order: search["order"] } : {},
   component: AccountPage,
 });
 
@@ -182,18 +181,17 @@ function SignedInAccount({ firstName, email }: { firstName: string; email: strin
 function SignedOutAccount({ search }: { search: AccountSearch }) {
   const { openAuth } = useAuth();
   const [orderNumber, setOrderNumber] = useState(search.order ?? "");
-  const [email, setEmail] = useState(search.email ?? "");
+  const [email, setEmail] = useState("");
   const [result, setResult] = useState<OrderRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const autoTracked = useRef(false);
 
-  const track = async (e?: FormEvent) => {
-    e?.preventDefault();
+  const track = async (lookup: { orderNumber: string; email: string }) => {
     setSearching(true);
     setError(null);
     try {
-      const res = await trackOrder({ data: { orderNumber, email } });
+      const res = await trackOrder({ data: lookup });
       if (!res.ok) {
         setError(res.error);
         setResult(null);
@@ -210,13 +208,15 @@ function SignedOutAccount({ search }: { search: AccountSearch }) {
     }
   };
 
-  // Arriving from the checkout confirmation link: look the order up straight away.
+  // Arriving from the checkout confirmation link in this tab: look the order up straight away.
   useEffect(() => {
-    if (autoTracked.current || !search.order || !search.email) return;
+    if (autoTracked.current || !search.order) return;
+    const savedEmail = lastOrderEmail(search.order);
+    if (!savedEmail) return;
     autoTracked.current = true;
-    void track();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search.order, search.email]);
+    setEmail(savedEmail);
+    void track({ orderNumber: search.order, email: savedEmail });
+  }, [search.order]);
 
   return (
     <div className="space-y-8">
@@ -254,7 +254,13 @@ function SignedOutAccount({ search }: { search: AccountSearch }) {
           </div>
         </div>
 
-        <form onSubmit={track} className="paper-panel rounded-3xl p-6">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void track({ orderNumber, email });
+          }}
+          className="paper-panel rounded-3xl p-6"
+        >
           <h2 className="font-display text-xl font-bold">Track an order</h2>
           <div className="mt-4 space-y-3">
             <input

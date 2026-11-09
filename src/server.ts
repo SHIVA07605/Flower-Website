@@ -44,18 +44,50 @@ function isH3SwallowedErrorBody(body: string): boolean {
   }
 }
 
+const SECURITY_HEADERS: Record<string, string> = {
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+  "strict-transport-security": "max-age=31536000",
+};
+
+// Pages where one click changes data (admin roles, order status) or shows personal details.
+// Only the site itself and the Lovable editor may frame them, which blocks clickjacking.
+const NO_FRAMING_PATHS = /^\/(?:admin|account)(?:\/|$)/;
+const FRAME_ANCESTORS = "frame-ancestors 'self' https://lovable.dev https://*.lovable.dev";
+
+function withSecurityHeaders(request: Request, response: Response): Response {
+  // Some responses (e.g. redirects or fetched assets) have immutable headers.
+  let res = response;
+  try {
+    res.headers.set("x-content-type-options", "nosniff");
+  } catch {
+    res = new Response(response.body, response);
+  }
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+    if (!res.headers.has(name)) res.headers.set(name, value);
+  }
+  if (NO_FRAMING_PATHS.test(new URL(request.url).pathname)) {
+    res.headers.set("content-security-policy", FRAME_ANCESTORS);
+  }
+  return res;
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
-      return await normalizeCatastrophicSsrResponse(response);
+      return withSecurityHeaders(request, await normalizeCatastrophicSsrResponse(response));
     } catch (error) {
       console.error(error);
-      return new Response(renderErrorPage(), {
-        status: 500,
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
+      return withSecurityHeaders(
+        request,
+        new Response(renderErrorPage(), {
+          status: 500,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+      );
     }
   },
 };

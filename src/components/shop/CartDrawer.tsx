@@ -29,6 +29,7 @@ import {
   formatDeliveryDate,
   type CheckoutInput,
 } from "@/lib/orders";
+import { rememberLastOrder } from "@/lib/last-order";
 import { useCart } from "./cart";
 import { formatPrice } from "./products";
 import { useStorefront } from "./storefront";
@@ -211,6 +212,7 @@ export function CartDrawer() {
         return;
       }
       setPlaced(result.data);
+      rememberLastOrder(result.data.orderNumber, result.data.email);
       cart.clear();
       setAppliedPromo(null);
       setForm((f) => ({
@@ -275,7 +277,7 @@ export function CartDrawer() {
             </p>
             <Link
               to="/account"
-              search={user ? {} : { order: placed.orderNumber, email: placed.email }}
+              search={user ? {} : { order: placed.orderNumber }}
               onClick={() => cart.setOpen(false)}
               className="bg-cta shadow-cta mt-6 rounded-full px-6 py-3 text-sm font-bold text-primary-foreground"
             >

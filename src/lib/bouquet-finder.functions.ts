@@ -17,10 +17,16 @@ export const findBouquet = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<FinderResponse> => {
     if (!data.ok) return data;
     const { recommendBouquet, FinderError } = await import("./bouquet-finder.server");
+    const { clientAddress, enforceLimit, LIMITS } = await import("./server/rate-limit.server");
+    const { ServiceError } = await import("./server/env.server");
     try {
+      // Each request can cost an AI call, so cap it per visitor.
+      await enforceLimit(LIMITS.finder, await clientAddress());
       return { ok: true, result: await recommendBouquet(data.value) };
     } catch (error) {
-      if (error instanceof FinderError) return { ok: false, error: error.message };
+      if (error instanceof FinderError || error instanceof ServiceError) {
+        return { ok: false, error: error.message };
+      }
       console.error(error);
       return { ok: false, error: "Something went wrong. Please try again." };
     }

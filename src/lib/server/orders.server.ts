@@ -165,15 +165,22 @@ export async function placeOrder(viewer: Viewer | null, input: CheckoutData) {
     if (!promoMatches(input.promoCode, settings)) {
       throw new ServiceError("That promo code isn't valid.");
     }
-    const { count, error } = await db
-      .from("orders")
-      .select("id", { count: "exact", head: true })
-      .eq("customer_email", input.customer.email)
-      .neq("status", "cancelled");
-    if (error) throw dbFailure(error, "check your promo code");
-    if ((count ?? 0) > 0) {
+    // A fresh email alone shouldn't unlock the first-order discount again: check the phone too.
+    const previous = (column: "customer_email" | "customer_phone", value: string) =>
+      db
+        .from("orders")
+        .select("id", { count: "exact", head: true })
+        .eq(column, value)
+        .neq("status", "cancelled");
+    const [byEmail, byPhone] = await Promise.all([
+      previous("customer_email", input.customer.email),
+      previous("customer_phone", normalizePhone(input.customer.phone)),
+    ]);
+    if (byEmail.error) throw dbFailure(byEmail.error, "check your promo code");
+    if (byPhone.error) throw dbFailure(byPhone.error, "check your promo code");
+    if ((byEmail.count ?? 0) + (byPhone.count ?? 0) > 0) {
       throw new ServiceError(
-        `${settings.promoCode} is for a first order only, and this email has ordered before.`,
+        `${settings.promoCode} is for a first order only, and you've ordered with us before.`,
       );
     }
     promoApplied = true;
@@ -236,6 +243,29 @@ export async function listViewerOrders(viewer: Viewer): Promise<OrderRecord[]> {
     .map((row) => toOrderRecord(row));
 }
 
+/** "9876543210" → "••••••3210". */
+const maskPhone = (phone: string) => (phone.length > 4 ? `••••••${phone.slice(-4)}` : "••••");
+
+/**
+ * What guest tracking may reveal. Order numbers are sequential, so anyone who knows a
+ * shopper's email could find their orders: show delivery progress, but not the street
+ * address, phone numbers, the buyer's contact details or the private card message.
+ * Signed-in owners see everything via their account.
+ */
+export function redactForGuest(order: OrderRecord): OrderRecord {
+  return {
+    ...order,
+    customerName: order.customerName.split(/\s+/)[0] ?? "",
+    customerEmail: "",
+    customerPhone: maskPhone(order.customerPhone),
+    recipientName: order.recipientName.split(/\s+/)[0] ?? "",
+    recipientPhone: maskPhone(order.recipientPhone),
+    address: "",
+    cardMessage: "",
+    adminNote: "",
+  };
+}
+
 /** Guest tracking: needs both the order number and the email it was placed with. */
 export async function trackOrder(orderNumber: string, email: string): Promise<OrderRecord | null> {
   const db = requireServiceDb();
@@ -246,5 +276,5 @@ export async function trackOrder(orderNumber: string, email: string): Promise<Or
     .eq("customer_email", email.trim().toLowerCase())
     .maybeSingle();
   if (error) throw dbFailure(error, "find that order");
-  return data ? toOrderRecord(data as OrderRow) : null;
+  return data ? redactForGuest(toOrderRecord(data as OrderRow)) : null;
 }

@@ -2,7 +2,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import {
+  adminGrantSchema,
   contentUpdateSchema,
+  revokeGrantSchema,
   orderUpdateSchema,
   productInputSchema,
   reviewModerationSchema,
@@ -145,4 +147,32 @@ export const setCustomerRole = createServerFn({ method: "POST" })
     const { run } = await import("./server/db.server");
     const { setCustomerRole: setRole } = await import("./server/admin.server");
     return run(() => setRole(context.viewer, data.value), { audience: "admin" });
+  });
+
+export const listAdminGrants = createServerFn({ method: "GET" })
+  .middleware([viewerMiddleware])
+  .handler(async ({ context }) => {
+    const { run } = await import("./server/db.server");
+    const { listAdminGrants: list } = await import("./server/admin.server");
+    return run(() => list(context.viewer), { audience: "admin" });
+  });
+
+export const saveAdminGrant = createServerFn({ method: "POST" })
+  .middleware([viewerMiddleware])
+  .validator(validateWith(adminGrantSchema))
+  .handler(async ({ data, context }) => {
+    if (!data.ok) return data;
+    const { run } = await import("./server/db.server");
+    const { saveAdminGrant: save } = await import("./server/admin.server");
+    return run(() => save(context.viewer, data.value), { audience: "admin" });
+  });
+
+export const revokeAdminGrant = createServerFn({ method: "POST" })
+  .middleware([viewerMiddleware])
+  .validator(validateWith(revokeGrantSchema))
+  .handler(async ({ data, context }) => {
+    if (!data.ok) return data;
+    const { run } = await import("./server/db.server");
+    const { revokeAdminGrant: revoke } = await import("./server/admin.server");
+    return run(() => revoke(context.viewer, data.value.email), { audience: "admin" });
   });

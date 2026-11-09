@@ -177,6 +177,8 @@ describe("placing an order on the server", () => {
       name: "Asha",
       avatarUrl: null,
       isAdmin: false,
+      isOwner: false,
+      adminUntil: null,
     };
     await placeOrder(viewer, order());
     expect(inserted()["user_id"]).toBe("firebase:abc");

@@ -6,7 +6,15 @@ import type { AdminDashboardData } from "@/lib/admin-types";
 import { EmptyState, Panel } from "./shared";
 
 export type AdminTab =
-  "overview" | "orders" | "products" | "copy" | "pictures" | "billing" | "reviews" | "customers";
+  | "overview"
+  | "orders"
+  | "products"
+  | "copy"
+  | "pictures"
+  | "billing"
+  | "reviews"
+  | "customers"
+  | "access";
 
 export function OverviewPanel({
   data,

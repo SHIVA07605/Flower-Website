@@ -31,7 +31,11 @@ export const placeOrder = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { placeOrder: place } = await import("./server/orders.server");
-    return run(() => place(context.viewer, data.value));
+    const { clientAddress, enforceLimit, LIMITS } = await import("./server/rate-limit.server");
+    return run(async () => {
+      await enforceLimit(LIMITS.placeOrder, await clientAddress());
+      return place(context.viewer, data.value);
+    });
   });
 
 const trackSchema = z.object({
@@ -48,6 +52,10 @@ export const trackOrder = createServerFn({ method: "POST" })
     if (!data.ok) return data;
     const { run } = await import("./server/db.server");
     const { trackOrder: track } = await import("./server/orders.server");
+    const { clientAddress, enforceLimit, LIMITS } = await import("./server/rate-limit.server");
     const number = data.value.orderNumber.toUpperCase().replace(/^RM-?/, "RM-");
-    return run(() => track(number, data.value.email));
+    return run(async () => {
+      await enforceLimit(LIMITS.trackOrder, await clientAddress());
+      return track(number, data.value.email);
+    });
   });

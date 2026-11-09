@@ -13,6 +13,8 @@ import {
   type SetupStatus,
   type StoreTable,
   type SubscriberRecord,
+  type AdminGrantRecord,
+  type adminGrantSchema,
 } from "../admin-types";
 import { baseSortOrder, isBaseBouquetId, mergeCatalog, slugify } from "../catalog";
 import { istNow, ORDER_STATUSES, type OrderRecord } from "../orders";
@@ -23,7 +25,7 @@ import { dbFailure, getServiceDb, requireServiceDb } from "./db.server";
 import { serverEnv, ServiceError } from "./env.server";
 import { ORDER_COLUMNS, toOrderRecord, type OrderRow } from "./orders.server";
 import { loadCatalog, loadProductRows } from "./store.server";
-import { requireAdmin, type Viewer } from "./viewer.server";
+import { forgetCachedViewers, requireAdmin, requireOwner, type Viewer } from "./viewer.server";
 
 export const MEDIA_BUCKET = "site-media";
 
@@ -42,6 +44,7 @@ export async function getDashboard(viewer: Viewer | null): Promise<AdminDashboar
     tables,
     dbReady: false,
     storageReady: false,
+    rateLimitsReady: false,
     adminEmailsFromEnv: env.adminEmailsFromEnv,
     aiConfigured: env.aiConfigured,
   };
@@ -49,14 +52,20 @@ export async function getDashboard(viewer: Viewer | null): Promise<AdminDashboar
 
   const counts = await Promise.all(
     STORE_TABLES.map(async (table) => {
-      const { count, error } = await db.from(table).select("*", { count: "exact", head: true });
+      // A GET, never `head: true`: supabase-js reports a HEAD request for a missing table
+      // as a success (404 with no body becomes 204), which hid this setup check.
+      const { count, error } = await db.from(table).select("*", { count: "exact" }).limit(0);
       return { table, ok: !error, count: count ?? 0 };
     }),
   );
   for (const c of counts) tables[c.table] = c.ok;
   setup.dbReady = counts.every((c) => c.ok);
-  const { data: bucket } = await db.storage.getBucket(MEDIA_BUCKET);
+  const [{ data: bucket }, rateLimits] = await Promise.all([
+    db.storage.getBucket(MEDIA_BUCKET),
+    db.from("rate_limits").select("key").limit(0),
+  ]);
   setup.storageReady = Boolean(bucket);
+  setup.rateLimitsReady = !rateLimits.error;
   if (!setup.dbReady) return { setup, stats: null, recentOrders: [] };
 
   const countOf = (table: StoreTable) => counts.find((c) => c.table === table)?.count ?? 0;
@@ -471,7 +480,7 @@ export async function listCustomers(
 }
 
 export async function setCustomerRole(viewer: Viewer | null, input: z.output<typeof roleSchema>) {
-  const admin = requireAdmin(viewer);
+  const admin = requireOwner(viewer);
   if (input.id === admin.id && input.role === "user") {
     throw new ServiceError("You can't remove your own admin access.");
   }
@@ -485,4 +494,89 @@ export async function setCustomerRole(viewer: Viewer | null, input: z.output<typ
   if (error) throw dbFailure(error, "update that account");
   if (!data) throw new ServiceError("That account no longer exists.", 404);
   return { id: input.id, role: input.role };
+}
+
+/* ---------------- Admin access (owners only) ---------------- */
+
+interface GrantRow {
+  email: string;
+  expires_at: string | null;
+  note: string;
+  granted_by: string;
+  created_at: string;
+}
+
+export async function listAdminGrants(viewer: Viewer | null): Promise<AdminGrantRecord[]> {
+  requireOwner(viewer);
+  const db = requireServiceDb();
+  const { data, error } = await db
+    .from("admin_grants")
+    .select("email,expires_at,note,granted_by,created_at")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) throw dbFailure(error, "load admin access");
+  const rows = (data ?? []) as GrantRow[];
+  const emails = rows.map((r) => r.email);
+  const signedIn = new Set<string>();
+  if (emails.length > 0) {
+    const { data: profiles, error: profileError } = await db
+      .from("profiles")
+      .select("email")
+      .in("email", emails);
+    if (profileError) throw dbFailure(profileError, "load admin access");
+    for (const p of (profiles ?? []) as { email: string | null }[]) {
+      if (p.email) signedIn.add(p.email.toLowerCase());
+    }
+  }
+  const now = Date.now();
+  return rows.map((r) => ({
+    email: r.email,
+    expiresAt: r.expires_at,
+    active: r.expires_at === null || new Date(r.expires_at).getTime() > now,
+    note: r.note,
+    grantedBy: r.granted_by,
+    createdAt: r.created_at,
+    hasSignedIn: signedIn.has(r.email),
+  }));
+}
+
+/** Gives (or extends/shortens) someone's admin access. */
+export async function saveAdminGrant(
+  viewer: Viewer | null,
+  input: z.output<typeof adminGrantSchema>,
+) {
+  const owner = requireOwner(viewer);
+  if (serverEnv().adminEmails.includes(input.email)) {
+    throw new ServiceError("That email is already an owner (set in ADMIN_EMAILS).");
+  }
+  if (input.expiresAt !== null && new Date(input.expiresAt).getTime() <= Date.now() + 60_000) {
+    throw new ServiceError("Choose an end time in the future.");
+  }
+  const db = requireServiceDb();
+  const { error } = await db.from("admin_grants").upsert(
+    {
+      email: input.email,
+      expires_at: input.expiresAt,
+      note: input.note,
+      granted_by: owner.email ?? owner.id,
+    },
+    { onConflict: "email" },
+  );
+  if (error) throw dbFailure(error, "save admin access");
+  forgetCachedViewers();
+  return { email: input.email, expiresAt: input.expiresAt };
+}
+
+/** Removes someone's admin access straight away (including a permanent admin role). */
+export async function revokeAdminGrant(viewer: Viewer | null, email: string) {
+  requireOwner(viewer);
+  const db = requireServiceDb();
+  const [grant, role] = await Promise.all([
+    db.from("admin_grants").delete().eq("email", email),
+    db.from("profiles").update({ role: "user" }).eq("email", email),
+  ]);
+  if (grant.error) throw dbFailure(grant.error, "remove admin access");
+  if (role.error) throw dbFailure(role.error, "remove admin access");
+  forgetCachedViewers();
+  return { email };
 }

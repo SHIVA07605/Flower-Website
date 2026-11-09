@@ -9,4 +9,8 @@ export interface PublicViewer {
   name: string;
   avatarUrl: string | null;
   isAdmin: boolean;
+  /** Listed in ADMIN_EMAILS: can also give and remove other people's admin access. */
+  isOwner: boolean;
+  /** When a time-limited admin grant ends (ISO date); null when it doesn't expire. */
+  adminUntil: string | null;
 }

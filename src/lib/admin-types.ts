@@ -11,6 +11,7 @@ export const STORE_TABLES = [
   "orders",
   "reviews",
   "newsletter_subscribers",
+  "admin_grants",
 ] as const;
 export type StoreTable = (typeof STORE_TABLES)[number];
 
@@ -21,6 +22,8 @@ export interface SetupStatus {
   dbReady: boolean;
   /** The `site-media` storage bucket exists (needed for picture uploads). */
   storageReady: boolean;
+  /** The shared `rate_limits` table exists (otherwise each server instance counts alone). */
+  rateLimitsReady: boolean;
   adminEmailsFromEnv: boolean;
   aiConfigured: boolean;
 }
@@ -66,7 +69,8 @@ const imageUrl = z
   .trim()
   .max(1000)
   .refine(
-    (v) => /^https?:\/\/\S+$/i.test(v) || v.startsWith("/"),
+    // Site-relative paths are fine; "//host/…" would load from another site, so it isn't.
+    (v) => /^https?:\/\/\S+$/i.test(v) || /^\/(?!\/)\S*$/.test(v),
     "Use an https:// image link or upload a picture",
   );
 
@@ -114,3 +118,28 @@ export const contentUpdateSchema = z.record(z.string(), z.string().max(4000));
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export const UPLOAD_TYPES = ["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"];
+
+/** Someone the owner gave admin access to. */
+export interface AdminGrantRecord {
+  email: string;
+  /** ISO date the access ends; null = until the owner removes it. */
+  expiresAt: string | null;
+  active: boolean;
+  note: string;
+  grantedBy: string;
+  createdAt: string;
+  /** Has signed in at least once (has a profile). */
+  hasSignedIn: boolean;
+}
+
+export const adminGrantSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter the person's email address").max(254),
+  /** ISO date-time; null = no end date. */
+  expiresAt: z.string().datetime({ offset: true, message: "Choose a valid end date" }).nullable(),
+  note: z.string().trim().max(200).default(""),
+});
+export type AdminGrantInput = z.input<typeof adminGrantSchema>;
+
+export const revokeGrantSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(254),
+});

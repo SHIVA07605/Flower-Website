@@ -94,10 +94,10 @@ export function CustomersPanel() {
                           </span>
                         )}
                         {viaAllowlist ? (
-                          <span className="text-xs text-ink-soft">via ADMIN_EMAILS</span>
+                          <span className="text-xs text-ink-soft">owner or time-limited</span>
                         ) : c.id === viewer?.id ? (
                           <span className="text-xs text-ink-soft">You</span>
-                        ) : (
+                        ) : !viewer?.isOwner ? null : (
                           <button
                             type="button"
                             disabled={setRole.isPending}

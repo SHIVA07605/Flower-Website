@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Package,
   Receipt,
+  ShieldCheck,
   Users,
   Wallet,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { getAdminDashboard } from "@/lib/admin.functions";
 import { unwrap } from "@/lib/result";
+import { AccessPanel } from "./AccessPanel";
 import { BillingPanel, CopyPanel, PicturesPanel } from "./ContentPanels";
 import { CustomersPanel } from "./CustomersPanel";
 import { OrdersPanel } from "./OrdersPanel";
@@ -35,10 +37,11 @@ const TABS: { id: AdminTab; label: string; icon: typeof Package }[] = [
   { id: "billing", label: "Billing & promo", icon: Wallet },
   { id: "reviews", label: "Reviews", icon: MessageSquare },
   { id: "customers", label: "Customers", icon: Users },
+  { id: "access", label: "Admin access", icon: ShieldCheck },
 ];
 
 export function AdminDashboard() {
-  const { user, signOut } = useAuth();
+  const { user, viewer, signOut } = useAuth();
   const [tab, setTab] = useState<AdminTab>("overview");
   const dashboard = useQuery({
     queryKey: ["admin", "dashboard"],
@@ -117,6 +120,12 @@ export function AdminDashboard() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-8 sm:py-8">
+        {viewer?.adminUntil && (
+          <p className="mb-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs text-sky-900">
+            The owner gave you admin access until{" "}
+            {new Date(viewer.adminUntil).toLocaleString("en-IN")}.
+          </p>
+        )}
         {dashboard.data && <SetupBanner setup={dashboard.data.setup} />}
 
         {tab === "overview" &&
@@ -134,6 +143,7 @@ export function AdminDashboard() {
         {tab === "billing" && <BillingPanel />}
         {tab === "reviews" && <ReviewsPanel />}
         {tab === "customers" && <CustomersPanel />}
+        {tab === "access" && <AccessPanel />}
       </main>
     </div>
   );
